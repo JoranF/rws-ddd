@@ -1,0 +1,24 @@
+# Env
+.env
+*.local
+
+# Dependencies / build output (per stack — laat staan, iedere service vult aan)
+node_modules/
+dist/
+build/
+target/
+bin/
+obj/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Docker / data
+pgdata/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

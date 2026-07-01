@@ -1,0 +1,93 @@
+# RWS-DDD — lokale ontwikkelstack.
+# Start met:  docker compose up
+# Alleen de gedeelde infra (rabbitmq + postgres) staat standaard aan.
+# Activeer je eigen service door het bijbehorende blok hieronder te uncommenten
+# zodra je een werkende Dockerfile in je map hebt gezet.
+name: rws-ddd
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rws-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-rws}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-rws}
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # management UI -> http://localhost:15672
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [rws-net]
+
+  postgres:
+    image: postgres:16
+    container_name: rws-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rws}
+      POSTGRES_PASSWORD: ${POSTGRES_PASS:-rws}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rws}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [rws-net]
+
+  # ---------------------------------------------------------------------------
+  # Services — uncomment je eigen blok als je Dockerfile klaarstaat.
+  # Elke service vindt de infra op containernaam: rabbitmq / postgres.
+  # ---------------------------------------------------------------------------
+
+  # beheer:
+  #   build: ./beheer
+  #   container_name: rws-beheer
+  #   env_file: ./beheer/.env
+  #   ports: ["8004:8004"]
+  #   depends_on:
+  #     rabbitmq: { condition: service_healthy }
+  #     postgres: { condition: service_healthy }
+  #   networks: [rws-net]
+
+  # contract:
+  #   build: ./contract
+  #   container_name: rws-contract
+  #   env_file: ./contract/.env
+  #   ports: ["8001:8001"]
+  #   depends_on:
+  #     rabbitmq: { condition: service_healthy }
+  #     postgres: { condition: service_healthy }
+  #   networks: [rws-net]
+
+  # monitoring:
+  #   build: ./monitoring
+  #   container_name: rws-monitoring
+  #   env_file: ./monitoring/.env
+  #   ports: ["8002:8002"]
+  #   depends_on:
+  #     rabbitmq: { condition: service_healthy }
+  #     postgres: { condition: service_healthy }
+  #   networks: [rws-net]
+
+  # onderhoud:
+  #   build: ./onderhoud
+  #   container_name: rws-onderhoud
+  #   env_file: ./onderhoud/.env
+  #   ports: ["8003:8003"]
+  #   depends_on:
+  #     rabbitmq: { condition: service_healthy }
+  #     postgres: { condition: service_healthy }
+  #   networks: [rws-net]
+
+networks:
+  rws-net:
+    name: rws-net
+
+volumes:
+  pgdata:
