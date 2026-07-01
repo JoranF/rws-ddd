@@ -10,14 +10,23 @@ praten met elkaar via **REST** (synchrone queries) en **domain events** over Rab
 (asynchrone integratie). Alles draait lokaal met één `docker compose up` en wordt
 gehost op **Dokploy**.
 
+> **📄 Leidend bronbestand:** de volledige analyse en het ontwerp staan in het
+> uitgebreide DDD-verslag **[docs/DDD verslag, Laurens, Sven, Joran, Kaleb.docx](docs/DDD%20verslag,%20Laurens,%20Sven,%20Joran,%20Kaleb.docx)**.
+> Dat document bevat alle verduidelijking — event storming, context mapping, ubiquitous
+> language en het tactisch ontwerp per context — en is **bepalend**. Waar de docs in
+> deze repo afwijken van het verslag, wint het verslag, tenzij het verslag zichzelf
+> duidelijk tegenspreekt. De term voor een stuk infrastructuur is **kunstwerk**
+> (`KunstwerkId`), niet "object" — behalve binnen de Contract-context, die dit in zijn
+> eigen taal soms "object" noemt.
+
 ## De vier services (bounded contexts)
 
 | Service      | Map            | Poort | Eigenaar | Verantwoordelijkheid                                   |
 |--------------|----------------|-------|----------|--------------------------------------------------------|
-| **Beheer**   | `beheer/`      | 8004  | _TBD_    | Register van kunstwerken/objecten (bron van waarheid)  |
-| **Contract** | `contract/`    | 8001  | _TBD_    | Onderhoudscontracten met aannemers per object          |
-| **Monitoring**| `monitoring/` | 8002  | _TBD_    | Conditie-/sensordata en meldingen                      |
-| **Onderhoud**| `onderhoud/`   | 8003  | _TBD_    | Inspecties, werkorders en onderhoudsplanning           |
+| **Beheer**   | `beheer/`      | 8004  | _TBD_    | Kunstwerk-register + eisen; bron van waarheid voor `KunstwerkId` |
+| **Contract** | `contract/`    | 8001  | _TBD_    | Onderhoudscontracten & aanbestedingen (EMVI) per kunstwerk       |
+| **Monitoring**| `monitoring/` | 8002  | _TBD_    | Sensordata, afwijkingen, incidenten en rapportages              |
+| **Onderhoud**| `onderhoud/`   | 8003  | _TBD_    | Storingen, diagnoses, onderhoudsschema's en facturen            |
 
 Vul je naam in bij _Eigenaar_ zodra je een service oppakt.
 
@@ -40,6 +49,7 @@ Je eigen service toevoegen aan de lokale stack:
 
 ## Documentatie
 
+- **[docs/DDD verslag, Laurens, Sven, Joran, Kaleb.docx](docs/DDD%20verslag,%20Laurens,%20Sven,%20Joran,%20Kaleb.docx)** — het **leidende** DDD-verslag met alle verduidelijking (analyse, event storming, context mapping, ubiquitous language, tactisch ontwerp per context)
 - [docs/ontwerp.md](docs/ontwerp.md) — het ontwerp/de spec (waarom het zo is opgezet)
 - [docs/context-map.md](docs/context-map.md) — DDD context map: hoe de contexts zich verhouden
 - [docs/conventions.md](docs/conventions.md) — **afspraken** die iedereen volgt (poorten, health, lagen, checklist)
@@ -59,7 +69,7 @@ gegenereerde code de bounded-context-grenzen respecteert.
 ```
 rws-ddd/
 ├── README.md            · CLAUDE.md          · docker-compose.yml · .env.example
-├── docs/                (context-map, conventions, events, dokploy, ontwerp)
+├── docs/                (DDD-verslag.docx [leidend], context-map, conventions, events, dokploy, ontwerp)
 ├── infra/postgres/init/ (maakt 1 database per context aan)
 └── <service>/           (contract | monitoring | onderhoud | beheer)
     ├── README.md   · CLAUDE.md · Dockerfile · .env.example
