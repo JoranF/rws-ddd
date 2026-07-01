@@ -29,7 +29,32 @@ Inspectie · Factuur (FactuurId) · AannemerId · Status ·
   `beheer.onderhoudseisen.vastgesteld` en `beheer.kunstwerk.*`.
 - **Relaties:** partner van **Beheer** (levert het onderhoudsrapport terug), customer van
   **Monitoring** en **Contract**. Externe aannemers via een **Anti-Corruption Layer**.
-- **REST:** `GET /api/onderhoud`, `POST /api/storingen`.
+
+## REST-endpoints (Fase 1)
+
+| Endpoint                                              | Doel                                            |
+|-------------------------------------------------------|-------------------------------------------------|
+| `POST /api/storingen`                                  | Storing melden (`MeldStoring`); plant bij ernst Hoog/Kritiek automatisch een traject |
+| `GET /api/storingen`                                   | Storingen opvragen                              |
+| `POST /api/diagnoses`                                  | Diagnose stellen op basis van monitoringdata (`StelDiagnose`) |
+| `GET /api/onderhoud`, `GET /api/onderhoud/:id`         | Onderhoudstrajecten opvragen                    |
+| `POST /api/onderhoud/:id/start`                        | Traject starten (`StartOnderhoud`)              |
+| `POST /api/onderhoud/:id/inspecties`                   | Inspectie registreren                           |
+| `POST /api/onderhoud/:id/afronden`                     | Traject afronden (`AfrondenOnderhoud`); vereist goedgekeurde inspectie |
+| `POST /api/onderhoud/:id/facturen`                     | Factuur ontvangen (intern formaat)              |
+| `POST /api/onderhoud/:id/facturen/:factuurId/goedkeuring` | Factuur goedkeuren; vereist afgerond traject |
+| `POST /api/extern/facturen`                            | Externe aannemersfactuur via de **ACL**         |
+| `POST /api/schemas`, `GET /api/schemas`                | OnderhoudsSchema maken/opvragen (`MaakSchema`)  |
+| `POST /api/contractaanvragen`                          | Contractaanvraag indienen richting Contract     |
+| `GET /health`                                          | Healthcheck (DB + broker)                       |
+
+OpenAPI-documentatie: `GET /api/docs`.
+
+## Implementatie
+- **Geplande stack (Fase 1):** Node.js 22, TypeScript, Fastify, Prisma (PostgreSQL
+  `onderhoud_db`), amqplib, Vitest — zelfde patronen als de Contract-service.
+- **Plan:** [docs/superpowers/plans/2026-07-01-onderhoud-service-fase-1.md](../docs/superpowers/plans/2026-07-01-onderhoud-service-fase-1.md)
+  (18 taken, TDD, walking-skeleton-first).
 
 ## Draaien
 Zie de [checklist in conventions.md](../docs/conventions.md#8-checklist--je-service-toevoegen).
