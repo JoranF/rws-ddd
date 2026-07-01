@@ -6,7 +6,7 @@ De kern. Bevat de bedrijfslogica en de taal van het domein (ubiquitous language)
 
 ## Wat hoort hier
 - Entities & Aggregates met hun invarianten (de regels die altijd waar moeten zijn)
-- Value Objects (bv. Locatie, ObjectId, Periode, Bedrag)
+- Value Objects (bv. Locatie, KunstwerkId, Periode, Bedrag)
 - Domain Events (puur, zonder transport-/serialisatiedetails)
 - Repository-*interfaces* (contracten, geen implementatie)
 - Domain Services voor logica die niet bij één entity hoort

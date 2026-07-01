@@ -16,10 +16,10 @@ Elke service exposeert **`GET /health`** dat `200 OK` teruggeeft zodra de servic
 is. Docker (lokaal) en Dokploy (productie) gebruiken dit voor healthchecks.
 
 ## 3. REST
-- Basispad: **`/api`** (bv. `GET /api/objecten`, `POST /api/werkorders`).
+- Basispad: **`/api`** (bv. `GET /api/kunstwerken`, `POST /api/onderhoud`).
 - Lokaal vinden services elkaar op containernaam: `http://beheer:8004/api/...`.
 - Documenteer je endpoints (bij voorkeur OpenAPI/Swagger). Andere teams bouwen hierop.
-- Gebruik REST voor **synchrone queries** ("geef object X"), niet voor het doorgeven van
+- Gebruik REST voor **synchrone queries** ("geef kunstwerk X"), niet voor het doorgeven van
   gebeurtenissen — dat gaat via events.
 
 ## 4. Events
@@ -44,6 +44,13 @@ DDD-principe: elke bounded context bezit zijn eigen data. Lokaal draait één Po
 een database per context (`beheer_db`, `contract_db`, `monitoring_db`, `onderhoud_db`,
 aangemaakt door `infra/postgres/init/`). **Nooit** de tabellen van een andere context
 lezen of schrijven — vraag data op via REST of luister naar events.
+
+> **Eigen stack per service.** Het skelet gebruikt bewust één gedeelde Postgres voor
+> lokaal gemak, maar een context is vrij zijn eigen opslag te kiezen. Het verslag stelt
+> per service voor: **Beheer** → MySQL (relationeel, kunstwerk-register) op **Python**,
+> **Monitoring** → een wide-column DB (DynamoDB) voor sensordata. Kies je een andere DB,
+> laat je service dan nog steeds op `SERVICE_PORT` draaien en integreren via REST/events;
+> de gedeelde Postgres blijft beschikbaar voor wie hem gebruikt.
 
 ## 7. Interne laagindeling (DDD tactical)
 Aanbevolen structuur binnen elke service (elke map heeft een eigen `CLAUDE.md`):
