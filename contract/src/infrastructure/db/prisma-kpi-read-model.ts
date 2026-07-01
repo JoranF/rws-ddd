@@ -1,7 +1,8 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { KpiInvoer, KpiStore } from '../messaging/monitoring-rapport-consumer.js';
+import type { KpiBron } from '../../application/ports.js';
 
-export class PrismaKpiReadModel implements KpiStore {
+export class PrismaKpiReadModel implements KpiStore, KpiBron {
   constructor(private readonly prisma: PrismaClient) {}
 
   async bewaarKpi(invoer: KpiInvoer): Promise<void> {

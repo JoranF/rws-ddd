@@ -24,6 +24,14 @@ export interface KunstwerkenReadModel {
   isBekendEnInGebruik(id: KunstwerkId): Promise<boolean>;
 }
 
+/**
+ * Fase 2 (conformist op Monitoring): bron van de laatst bekende KPI-score per kunstwerk,
+ * gevoed door `monitoring.rapport.opgesteld`. Voedt de prestatieverklaring.
+ */
+export interface KpiBron {
+  laatsteKpiScore(kunstwerkId: string): Promise<number | null>;
+}
+
 export interface IdGenerator {
   nieuw(): string;
 }

@@ -32,6 +32,11 @@ async function start(): Promise<void> {
   const contractRepo = new PrismaOnderhoudscontractRepository(prisma);
   const kunstwerken = new PrismaKunstwerkenReadModel(prisma);
 
+  // Read-models + gedeelde idempotentie (Fase 1 + Fase 2 consumers).
+  const dedup = new PrismaEventDedup(prisma);
+  const ontwerpeisen = new PrismaOntwerpeisenReadModel(prisma);
+  const kpi = new PrismaKpiReadModel(prisma);
+
   const app = await bouwApp({
     health: {
       db: async () => { await prisma.$queryRaw`SELECT 1`; return true; },
@@ -45,17 +50,13 @@ async function start(): Promise<void> {
     },
     contract: {
       keurWijziging: new KeurWijzigingGoed(contractRepo, publisher, ids),
-      stelPrestatie: new StelPrestatieverklaringOp(contractRepo, publisher, ids),
+      stelPrestatie: new StelPrestatieverklaringOp(contractRepo, publisher, ids, kpi),
       rondAf: new RondOnderhoudscontractAf(contractRepo, publisher),
       repo: contractRepo,
     },
   });
 
   // Consumers (Fase 1 + Fase 2). Alle dedupliceren op eventId via de gedeelde VerwerktEvent-tabel.
-  const dedup = new PrismaEventDedup(prisma);
-  const ontwerpeisen = new PrismaOntwerpeisenReadModel(prisma);
-  const kpi = new PrismaKpiReadModel(prisma);
-
   const signaleerBuitengebruik = new SignaleerBuitengebruikstelling(contractRepo);
   await startBeheerConsumer(
     rabbit,
