@@ -66,4 +66,14 @@ describe('Aanbesteding-use-cases', () => {
     const uc = new GunAanbesteding(aanbestedingen, contracten, publisher, readModel, new VasteIdGenerator('C'), 'streng');
     await expect(uc.uitvoeren({ aanbestedingId: id, looptijdStart: '2026-01-01', looptijdEind: '2026-12-31' })).rejects.toThrow();
   });
+
+  it('gunt bij streng als het kunstwerk bekend en in gebruik is', async () => {
+    const id = await publiceer();
+    await new OntvangInschrijving(aanbestedingen, publisher, ids).uitvoeren({ aanbestedingId: id, aannemer: 'BAM', prijs: 1000, kwaliteitsscore: 80 });
+    const readModel = new FakeKunstwerkenReadModel(true);
+    const uc = new GunAanbesteding(aanbestedingen, contracten, publisher, readModel, new VasteIdGenerator('C'), 'streng');
+    const { contractId } = await uc.uitvoeren({ aanbestedingId: id, looptijdStart: '2026-01-01', looptijdEind: '2026-12-31' });
+    expect(contractId).toBe('C-1');
+    expect(publisher.types()).toContain('contract.onderhoudscontract.gegund');
+  });
 });
