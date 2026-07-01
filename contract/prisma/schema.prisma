@@ -71,3 +71,20 @@ model Prestatieverklaring {
   bedragCenten Int
   contract     Onderhoudscontract @relation(fields: [contractId], references: [id])
 }
+
+// Fase 2 — read-model: ontwerpeisen per kunstwerk (van Beheer, conformist/customer).
+model Ontwerpeis {
+  kunstwerkId  String   @id
+  eisen        Json
+  bijgewerktOp DateTime @updatedAt
+}
+
+// Fase 2 — read-model: KPI-rapport per (kunstwerk, incident) (van Monitoring, conformist/ACL).
+model KpiRapport {
+  id          String   @id
+  kunstwerkId String
+  incidentId  String?
+  kpiScore    Int?
+  resultaten  Json
+  ontvangenOp DateTime @default(now())
+}

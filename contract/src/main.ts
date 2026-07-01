@@ -8,6 +8,11 @@ import { PrismaOnderhoudscontractRepository } from './infrastructure/db/prisma-o
 import { PrismaKunstwerkenReadModel } from './infrastructure/db/prisma-kunstwerken-read-model.js';
 import { UuidIdGenerator } from './infrastructure/id-generator.js';
 import { BeheerKunstwerkVerwerker, startBeheerConsumer } from './infrastructure/messaging/beheer-kunstwerk-consumer.js';
+import { PrismaEventDedup } from './infrastructure/db/prisma-event-dedup.js';
+import { PrismaOntwerpeisenReadModel } from './infrastructure/db/prisma-ontwerpeisen-read-model.js';
+import { PrismaKpiReadModel } from './infrastructure/db/prisma-kpi-read-model.js';
+import { BeheerOntwerpeisenVerwerker, startOntwerpeisenConsumer } from './infrastructure/messaging/beheer-ontwerpeisen-consumer.js';
+import { MonitoringRapportVerwerker, startMonitoringRapportConsumer } from './infrastructure/messaging/monitoring-rapport-consumer.js';
 import { PubliceerAanbesteding } from './application/aanbesteding/publiceer-aanbesteding.js';
 import { OntvangInschrijving } from './application/aanbesteding/ontvang-inschrijving.js';
 import { GunAanbesteding } from './application/aanbesteding/gun-aanbesteding.js';
@@ -45,7 +50,15 @@ async function start(): Promise<void> {
     },
   });
 
+  // Consumers (Fase 1 + Fase 2). Alle dedupliceren op eventId via de gedeelde VerwerktEvent-tabel.
+  const dedup = new PrismaEventDedup(prisma);
+  const ontwerpeisen = new PrismaOntwerpeisenReadModel(prisma);
+  const kpi = new PrismaKpiReadModel(prisma);
+
   await startBeheerConsumer(rabbit, new BeheerKunstwerkVerwerker(kunstwerken, kunstwerken));
+  await startOntwerpeisenConsumer(rabbit, new BeheerOntwerpeisenVerwerker(ontwerpeisen, dedup));
+  await startMonitoringRapportConsumer(rabbit, new MonitoringRapportVerwerker(kpi, dedup));
+
   await app.listen({ host: '0.0.0.0', port: config.poort });
 }
 
