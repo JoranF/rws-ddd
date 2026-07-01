@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **⚠️ Stackbesluit gewijzigd (2026-07-01):** Onderhoud gebruikt **Node.js + NestJS + TypeORM** (niet Fastify/Prisma), voor meer stackdiversiteit in de repo. Dezelfde lagen, domeinlogica en use-cases blijven gelden, maar de taakcode hieronder staat nog in de oorspronkelijke Fastify/Prisma-vorm en moet in de nieuwe tools (her)schreven worden — bij voorkeur door de Onderhoud-eigenaar of via een verse `writing-plans`-ronde. Zie [docs/vervolgstappen.md](../../vervolgstappen.md) voor het stackoverzicht en de Fase 2-integratie.
+
 **Goal:** Bouw de Onderhoud bounded context (Fase 1) als zelfstandig draaiende service: drie aggregates (Storing, Onderhoud, OnderhoudsSchema), twee instappunten (MeldStoring + StelDiagnose), alle 4 gepubliceerde events, idempotente consumers voor Monitoring/Contract/Beheer, een Anti-Corruption Layer voor externe aannemersfacturen, REST + OpenAPI, en Docker.
 
 **Architecture:** Vier lagen met de afhankelijkheidsregel naar binnen (`interface → application → domain`, `infrastructure → domain/application`). `domain` is puur TypeScript; Prisma/Fastify/amqplib leven alleen in `infrastructure`/`interface`. Bouwvolgorde: walking skeleton (server/DB/broker/health) → domein met TDD → applicatie-use-cases met in-memory fakes → infrastructure-implementaties (repos, publisher, consumers, ACL) → interface + composition root → Docker. Zelfde stack en patronen als de Contract-service, zodat de repo consistent blijft.

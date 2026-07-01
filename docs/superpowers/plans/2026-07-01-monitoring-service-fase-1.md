@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **⚠️ Stackbesluit gewijzigd (2026-07-01):** Monitoring gebruikt **C# / .NET (ASP.NET Core)** (niet Node/Fastify/Prisma), voor meer stackdiversiteit in de repo. Dit is een andere taal, dus dit plan moet **opnieuw gegenereerd** worden voor .NET (EF Core-migraties, MassTransit of `RabbitMQ.Client` voor de topic-exchange `rws.events`, xUnit voor tests). De TypeScript-taken hieronder gelden dan als domein-/gedragsreferentie, niet als uit te voeren code. Zie [docs/vervolgstappen.md](../../vervolgstappen.md) voor het stackoverzicht en de Fase 2-integratie.
+
 **Goal:** Bouw de Monitoring bounded context (Fase 1) als zelfstandig draaiende service: twee aggregates (MonitoringSessie + Incident), AnalyseService met afwijkingsdetectie, MonitoringRapport, alle 4 gepubliceerde events, REST + OpenAPI, een idempotente Beheer-`kunstwerk.*`-consumer, en Docker.
 
 **Architecture:** Vier lagen met de afhankelijkheidsregel naar binnen (`interface → application → domain`, `infrastructure → domain/application`). `domain` is puur TypeScript; Prisma/Fastify/amqplib leven alleen in `infrastructure`/`interface`. Bouwvolgorde: walking skeleton (server/DB/broker/health) → domein met TDD → applicatie-use-cases met in-memory fakes → infrastructure-implementaties → interface + composition root → Docker.
