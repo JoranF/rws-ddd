@@ -29,4 +29,23 @@ describe('BeheerKunstwerkVerwerker', () => {
     await v.verwerk(env);
     expect(store.upserts).toEqual([{ id: 'KW1', inGebruik: false }]);
   });
+
+  it('roept de buitengebruik-callback aan bij buitengebruikstelling, en maar één keer (idempotent)', async () => {
+    const store = new FakeStore();
+    const dedup = new FakeDedup();
+    const gesignaleerd: string[] = [];
+    const v = new BeheerKunstwerkVerwerker(store, dedup, async (id) => { gesignaleerd.push(id); });
+    const env = { eventId: 'e1', eventType: 'beheer.kunstwerk.buitengebruikgesteld', data: { kunstwerkId: 'KW1' } };
+    await v.verwerk(env);
+    await v.verwerk(env);
+    expect(gesignaleerd).toEqual(['KW1']);
+  });
+
+  it('roept de callback niet aan bij registratie', async () => {
+    const store = new FakeStore();
+    const gesignaleerd: string[] = [];
+    const v = new BeheerKunstwerkVerwerker(store, new FakeDedup(), async (id) => { gesignaleerd.push(id); });
+    await v.verwerk({ eventId: 'e2', eventType: 'beheer.kunstwerk.geregistreerd', data: { kunstwerkId: 'KW1', type: 'brug', locatie: 'A2' } });
+    expect(gesignaleerd).toEqual([]);
+  });
 });

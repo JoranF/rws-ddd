@@ -19,6 +19,7 @@ import { GunAanbesteding } from './application/aanbesteding/gun-aanbesteding.js'
 import { KeurWijzigingGoed } from './application/onderhoudscontract/keur-wijziging-goed.js';
 import { StelPrestatieverklaringOp } from './application/onderhoudscontract/stel-prestatieverklaring-op.js';
 import { RondOnderhoudscontractAf } from './application/onderhoudscontract/rond-onderhoudscontract-af.js';
+import { SignaleerBuitengebruikstelling } from './application/onderhoudscontract/signaleer-buitengebruikstelling.js';
 
 async function start(): Promise<void> {
   const config = laadConfig(process.env);
@@ -55,7 +56,13 @@ async function start(): Promise<void> {
   const ontwerpeisen = new PrismaOntwerpeisenReadModel(prisma);
   const kpi = new PrismaKpiReadModel(prisma);
 
-  await startBeheerConsumer(rabbit, new BeheerKunstwerkVerwerker(kunstwerken, kunstwerken));
+  const signaleerBuitengebruik = new SignaleerBuitengebruikstelling(contractRepo);
+  await startBeheerConsumer(
+    rabbit,
+    new BeheerKunstwerkVerwerker(kunstwerken, kunstwerken, async (kunstwerkId) => {
+      await signaleerBuitengebruik.uitvoeren({ kunstwerkId });
+    }),
+  );
   await startOntwerpeisenConsumer(rabbit, new BeheerOntwerpeisenVerwerker(ontwerpeisen, dedup));
   await startMonitoringRapportConsumer(rabbit, new MonitoringRapportVerwerker(kpi, dedup));
 

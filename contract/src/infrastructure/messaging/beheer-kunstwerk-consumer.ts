@@ -12,7 +12,12 @@ export interface EventDedup {
 interface Envelope { eventId: string; eventType: string; data: Record<string, unknown> }
 
 export class BeheerKunstwerkVerwerker {
-  constructor(private readonly store: KunstwerkStore, private readonly dedup: EventDedup) {}
+  constructor(
+    private readonly store: KunstwerkStore,
+    private readonly dedup: EventDedup,
+    // Fase 2: optionele reactie op buitengebruikstelling (signaleer actieve contracten).
+    private readonly onBuitengebruik?: (kunstwerkId: string) => Promise<void>,
+  ) {}
 
   async verwerk(env: Envelope): Promise<void> {
     if (await this.dedup.isVerwerkt(env.eventId)) return;
@@ -22,6 +27,7 @@ export class BeheerKunstwerkVerwerker {
       await this.store.upsert(kunstwerkId, (env.data.type as string) ?? null, (env.data.locatie as string) ?? null);
     } else if (env.eventType === 'beheer.kunstwerk.buitengebruikgesteld') {
       await this.store.markeerBuitenGebruik(kunstwerkId);
+      if (this.onBuitengebruik) await this.onBuitengebruik(kunstwerkId);
     }
     await this.dedup.markeerVerwerkt(env.eventId);
   }
