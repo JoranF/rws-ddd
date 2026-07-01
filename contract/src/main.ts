@@ -1,10 +1,12 @@
 import { laadConfig } from './infrastructure/config.js';
 import { bouwApp } from './interface/http/app.js';
 import { maakPrismaClient } from './infrastructure/db/prisma-client.js';
+import { RabbitMqConnectie } from './infrastructure/messaging/rabbitmq-connectie.js';
 
 async function start(): Promise<void> {
   const config = laadConfig(process.env);
   const prisma = maakPrismaClient(config.databaseUrl);
+  const rabbit = await RabbitMqConnectie.verbind(config.rabbitmqUrl);
 
   const app = bouwApp({
     health: {
@@ -12,6 +14,7 @@ async function start(): Promise<void> {
         await prisma.$queryRaw`SELECT 1`;
         return true;
       },
+      broker: async () => rabbit.isVerbonden(),
     },
   });
 
