@@ -27,6 +27,7 @@ teamgenoot kiest zijn eigen taal/framework.
 - Hoe contexts zich verhouden: `docs/context-map.md`
 - Event-contract: `docs/events.md`
 - Deployen: `docs/dokploy.md`
+- Vervolgstappen, stack-per-service & Fase 2-integratie: `docs/vervolgstappen.md`
 
 ## Wat NIET te doen
 - Geen refactor over servicegrenzen heen.
