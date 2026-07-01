@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model BekendKunstwerk {
+  kunstwerkId  String   @id
+  type         String?
+  locatie      String?
+  inGebruik    Boolean  @default(true)
+  bijgewerktOp DateTime @updatedAt
+}
+
+model VerwerktEvent {
+  eventId    String   @id
+  verwerktOp DateTime @default(now())
+}
