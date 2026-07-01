@@ -2,7 +2,9 @@ import { laadConfig } from './infrastructure/config.js';
 import { bouwApp } from './interface/http/app.js';
 import { maakPrismaClient } from './infrastructure/db/prisma-client.js';
 import { RabbitMqConnectie } from './infrastructure/messaging/rabbitmq-connectie.js';
-import { RabbitMqEventPublisher } from './infrastructure/messaging/rabbitmq-event-publisher.js';
+import { PrismaOutboxEventPublisher } from './infrastructure/db/prisma-outbox-event-publisher.js';
+import { PrismaOutboxStore } from './infrastructure/db/prisma-outbox-store.js';
+import { OutboxRelay } from './infrastructure/messaging/outbox-relay.js';
 import { PrismaAanbestedingRepository } from './infrastructure/db/prisma-aanbesteding-repository.js';
 import { PrismaOnderhoudscontractRepository } from './infrastructure/db/prisma-onderhoudscontract-repository.js';
 import { PrismaKunstwerkenReadModel } from './infrastructure/db/prisma-kunstwerken-read-model.js';
@@ -27,7 +29,8 @@ async function start(): Promise<void> {
   const rabbit = await RabbitMqConnectie.verbind(config.rabbitmqUrl);
 
   const ids = new UuidIdGenerator();
-  const publisher = new RabbitMqEventPublisher(rabbit.kanaal);
+  // Fase 2: use-cases publiceren via de transactionele outbox; de relay bezorgt op rws.events.
+  const publisher = new PrismaOutboxEventPublisher(prisma);
   const aanbestedingRepo = new PrismaAanbestedingRepository(prisma);
   const contractRepo = new PrismaOnderhoudscontractRepository(prisma);
   const kunstwerken = new PrismaKunstwerkenReadModel(prisma);
@@ -66,6 +69,9 @@ async function start(): Promise<void> {
   );
   await startOntwerpeisenConsumer(rabbit, new BeheerOntwerpeisenVerwerker(ontwerpeisen, dedup));
   await startMonitoringRapportConsumer(rabbit, new MonitoringRapportVerwerker(kpi, dedup));
+
+  // Outbox-relay: bezorgt weggeschreven events op rws.events.
+  new OutboxRelay(new PrismaOutboxStore(prisma), rabbit.kanaal).start();
 
   await app.listen({ host: '0.0.0.0', port: config.poort });
 }

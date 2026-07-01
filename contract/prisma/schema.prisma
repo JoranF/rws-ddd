@@ -88,3 +88,17 @@ model KpiRapport {
   resultaten  Json
   ontvangenOp DateTime @default(now())
 }
+
+// Fase 2 — transactionele outbox: use-cases schrijven het event hier weg; een relay
+// bezorgt het daarna op `rws.events` (ontkoppeld van broker-beschikbaarheid).
+model OutboxEvent {
+  id             String    @id // = eventId (uuid) uit de envelope
+  eventType      String
+  routingKey     String
+  payload        Json // volledige envelope zoals gepubliceerd
+  gepubliceerd   Boolean   @default(false)
+  aangemaaktOp   DateTime  @default(now())
+  gepubliceerdOp DateTime?
+
+  @@index([gepubliceerd, aangemaaktOp])
+}

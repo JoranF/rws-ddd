@@ -7,6 +7,31 @@ export interface KanaalPublish {
   publish(exchange: string, routingKey: string, content: Buffer, opties?: { persistent?: boolean }): boolean;
 }
 
+export interface Envelope {
+  eventId: string;
+  eventType: string;
+  occurredAt: string;
+  producer: 'contract';
+  version: number;
+  data: Record<string, unknown>;
+}
+
+/** Bouwt de vaste envelope uit `docs/events.md` rond een domain event. */
+export function maakEnvelope(
+  event: ContractDomainEvent,
+  nieuwId: () => string = uuid,
+  nu: () => Date = () => new Date(),
+): Envelope {
+  return {
+    eventId: nieuwId(),
+    eventType: event.eventType,
+    occurredAt: nu().toISOString(),
+    producer: 'contract',
+    version: 1,
+    data: event.data,
+  };
+}
+
 export class RabbitMqEventPublisher implements EventPublisher {
   constructor(
     private readonly kanaal: KanaalPublish,
@@ -16,14 +41,7 @@ export class RabbitMqEventPublisher implements EventPublisher {
 
   async publiceer(events: ContractDomainEvent[]): Promise<void> {
     for (const event of events) {
-      const envelope = {
-        eventId: this.nieuwId(),
-        eventType: event.eventType,
-        occurredAt: this.nu().toISOString(),
-        producer: 'contract',
-        version: 1,
-        data: event.data,
-      };
+      const envelope = maakEnvelope(event, this.nieuwId, this.nu);
       this.kanaal.publish(RWS_EXCHANGE, event.eventType, Buffer.from(JSON.stringify(envelope)), { persistent: true });
     }
   }
