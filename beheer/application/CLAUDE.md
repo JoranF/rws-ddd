@@ -5,7 +5,7 @@
 Orkestreert use cases. Een dun laagje dat het domein aanstuurt.
 
 ## Wat hoort hier
-- Use cases / application services (commands & queries), bv. RegistreerObject, PlanWerkorder
+- Use cases / application services (commands & queries), bv. RegistreerKunstwerk, StelEisenVast
 - Transactiegrenzen: één use case = één transactie
 - Aanroepen van repository-interfaces uit domain
 - Publiceren van domain events via een interface (niet direct RabbitMQ)
