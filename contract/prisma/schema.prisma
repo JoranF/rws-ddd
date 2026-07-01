@@ -19,3 +19,55 @@ model VerwerktEvent {
   eventId    String   @id
   verwerktOp DateTime @default(now())
 }
+
+model Aanbesteding {
+  id                String         @id
+  kunstwerkId       String
+  sluitingsdatum    DateTime
+  prijsgewicht      Int
+  kwaliteitsgewicht Int
+  status            String
+  inschrijvingen    Inschrijving[]
+}
+
+model Inschrijving {
+  id              String       @id
+  aanbestedingId  String
+  aannemer        String
+  prijsCenten     Int
+  kwaliteitsscore Int
+  aanbesteding    Aanbesteding @relation(fields: [aanbestedingId], references: [id])
+}
+
+model Onderhoudscontract {
+  id             String                @id
+  kunstwerkId    String
+  opdrachtnemer  String
+  looptijdStart  DateTime
+  looptijdEind   DateTime
+  waardeCenten   Int
+  aanbestedingId String?
+  status         String
+  wijzigingen    Wijziging[]
+  prestaties     Prestatieverklaring[]
+}
+
+model Wijziging {
+  id            String             @id
+  contractId    String
+  mutatieCenten Int
+  soort         String
+  reden         String
+  datum         DateTime
+  contract      Onderhoudscontract @relation(fields: [contractId], references: [id])
+}
+
+model Prestatieverklaring {
+  id           String             @id
+  contractId   String
+  periodeStart DateTime
+  periodeEind  DateTime
+  score        Int
+  bedragCenten Int
+  contract     Onderhoudscontract @relation(fields: [contractId], references: [id])
+}
