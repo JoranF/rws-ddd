@@ -1,0 +1,36 @@
+[project]
+name = "rws-beheer"
+version = "0.1.0"
+description = "Beheer bounded context for the RWS DDD project"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.13.2",
+  "fastapi>=0.111.0",
+  "pika>=1.3.2",
+  "psycopg[binary]>=3.2.1",
+  "pydantic>=2.8.2",
+  "sqlalchemy>=2.0.32",
+  "uvicorn[standard]>=0.30.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27.0",
+  "pytest>=8.3.2",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["application", "domain", "infrastructure", "interface"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
