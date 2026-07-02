@@ -1,0 +1,159 @@
+name: CI
+
+# Poortwachter vóór productie: elke push/PR naar main draait de tests van de
+# gewijzigde bounded context(s). Alleen als de tests groen zijn hoort een deploy te
+# volgen. Zet in Dokploy per Application autoDeploy UIT en laat de deploy pas na een
+# groene run gebeuren (zie het "deploy"-blok onderaan en docs/ci-cd.md).
+#
+# De paths-filter spiegelt de watchPaths in Dokploy: een wijziging in één context
+# bouwt/test alleen die context — de contextgrenzen blijven ook in CI gescheiden.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Oudere runs voor dezelfde branch/PR annuleren zodra er een nieuwe binnenkomt.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      contract: ${{ steps.filter.outputs.contract }}
+      monitoring: ${{ steps.filter.outputs.monitoring }}
+      onderhoud: ${{ steps.filter.outputs.onderhoud }}
+      beheer: ${{ steps.filter.outputs.beheer }}
+      portal: ${{ steps.filter.outputs.portal }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            contract:
+              - 'contract/**'
+            monitoring:
+              - 'monitoring/**'
+            onderhoud:
+              - 'onderhoud/**'
+            beheer:
+              - 'beheer/**'
+            portal:
+              - 'frontends/portal/**'
+
+  contract:
+    needs: changes
+    if: ${{ needs.changes.outputs.contract == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: contract/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build
+      - run: npm test
+
+  onderhoud:
+    needs: changes
+    if: ${{ needs.changes.outputs.onderhoud == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: onderhoud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: onderhoud/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  beheer:
+    needs: changes
+    if: ${{ needs.changes.outputs.beheer == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: beheer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e ".[dev]" ruff
+      # Lint is voorlopig informatief (blokkeert nog niet) zodat bestaande stijl-issues
+      # de eerste runs niet rood maken. Zet continue-on-error op false zodra schoon.
+      - run: ruff check .
+        continue-on-error: true
+      - run: pytest
+
+  monitoring:
+    needs: changes
+    if: ${{ needs.changes.outputs.monitoring == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Unit tests
+        run: dotnet test monitoring/test/Monitoring.UnitTests/Monitoring.UnitTests.csproj -c Release
+
+  portal:
+    needs: changes
+    if: ${{ needs.changes.outputs.portal == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontends/portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontends/portal/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Deploy-poort (optioneel, staat standaard uit). Zodra je in Dokploy per
+  # Application autoDeploy UITzet en de deploy-webhook-URL's als GitHub Secrets
+  # toevoegt (Settings > Secrets > Actions), triggert onderstaande job pas ná
+  # groene tests een deploy. Zie docs/ci-cd.md voor de exacte stappen.
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: [changes, contract, monitoring, onderhoud, beheer, portal]
+    # Draait alleen op main, en alleen als geen enkele test-job faalde (skipped mag).
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && !failure() && !cancelled() && vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Dokploy deploys (alleen gewijzigde services)
+        env:
+          CONTRACT_HOOK: ${{ secrets.DOKPLOY_CONTRACT_WEBHOOK }}
+          MONITORING_HOOK: ${{ secrets.DOKPLOY_MONITORING_WEBHOOK }}
+          ONDERHOUD_HOOK: ${{ secrets.DOKPLOY_ONDERHOUD_WEBHOOK }}
+          BEHEER_HOOK: ${{ secrets.DOKPLOY_BEHEER_WEBHOOK }}
+          PORTAL_HOOK: ${{ secrets.DOKPLOY_PORTAL_WEBHOOK }}
+        run: |
+          trigger() { [ -n "$2" ] && { echo "Deploy $1"; curl -fsSL -X POST "$2" || exit 1; } || echo "Skip $1 (geen webhook secret)"; }
+          [ "${{ needs.changes.outputs.contract }}" = "true" ]   && trigger contract   "$CONTRACT_HOOK"
+          [ "${{ needs.changes.outputs.monitoring }}" = "true" ] && trigger monitoring "$MONITORING_HOOK"
+          [ "${{ needs.changes.outputs.onderhoud }}" = "true" ]  && trigger onderhoud  "$ONDERHOUD_HOOK"
+          [ "${{ needs.changes.outputs.beheer }}" = "true" ]     && trigger beheer     "$BEHEER_HOOK"
+          [ "${{ needs.changes.outputs.portal }}" = "true" ]     && trigger portal     "$PORTAL_HOOK"
+          echo "Klaar."
