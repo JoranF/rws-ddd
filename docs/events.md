@@ -63,6 +63,7 @@ event storming), gemapt op het routing-key-schema `<context>.<aggregate>.<event>
 | `monitoring.incident.aangemaakt`         | Monitoring | `incidentId`, `kunstwerkId`, `ernst`, `omschrijving`    |
 | `monitoring.incident.opgelost`           | Monitoring | `incidentId`, `kunstwerkId`, `datum`                    |
 | `monitoring.rapport.opgesteld`           | Monitoring | `kunstwerkId`, `incidentId`, `resultaten`               |
+| `monitoring.netwerkrapportage.opgesteld` | Monitoring | `periode` {start,eind}, `opgesteldOp`, `kunstwerken[]` (`kunstwerkId`, `aantalMetingen`, `aantalIncidenten`, `zwaarsteErnst`) |
 | `onderhoud.storing.gemeld`               | Onderhoud  | `storingId`, `kunstwerkId`, `omschrijving`              |
 | `onderhoud.onderhoud.gestart`            | Onderhoud  | `onderhoudId`, `kunstwerkId`, `datum`                   |
 | `onderhoud.onderhoud.afgerond`           | Onderhoud  | `onderhoudId`, `kunstwerkId`, `resultaat`, `datum`      |

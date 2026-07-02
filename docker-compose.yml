@@ -65,15 +65,15 @@ services:
       postgres: { condition: service_healthy }
     networks: [rws-net]
 
-  # monitoring:
-  #   build: ./monitoring
-  #   container_name: rws-monitoring
-  #   env_file: ./monitoring/.env
-  #   ports: ["8002:8002"]
-  #   depends_on:
-  #     rabbitmq: { condition: service_healthy }
-  #     postgres: { condition: service_healthy }
-  #   networks: [rws-net]
+  monitoring:
+    build: ./monitoring
+    container_name: rws-monitoring
+    env_file: ./monitoring/.env
+    ports: ["8002:8002"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    networks: [rws-net]
 
   onderhoud:
     build: ./onderhoud
