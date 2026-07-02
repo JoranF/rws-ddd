@@ -85,6 +85,23 @@ services:
       postgres: { condition: service_healthy }
     networks: [rws-net]
 
+  # ---------------------------------------------------------------------------
+  # Frontends — één demo-dashboard per teamlid (map frontends/<naam>/).
+  # nginx proxyt de relatieve paden naar de interne servicenamen.
+  # ---------------------------------------------------------------------------
+
+  frontend-sven:
+    build: ./frontends/sven
+    container_name: rws-frontend-sven
+    environment:
+      CONTRACT_URL: http://contract:8001
+      MONITORING_URL: http://monitoring:8002
+      ONDERHOUD_URL: http://onderhoud:8003
+      BEHEER_URL: http://beheer:8004
+    ports: ["8005:80"]
+    depends_on: [contract, monitoring, onderhoud, beheer]
+    networks: [rws-net]
+
 networks:
   rws-net:
     name: rws-net
