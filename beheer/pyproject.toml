@@ -31,6 +31,11 @@ packages = ["application", "domain", "infrastructure", "interface"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "unit: domain/application unit tests",
+  "interface: REST, DTO, env, and published-language contract tests",
+  "integration: cross-layer, persistence, and event integration tests",
+]
 
 [tool.ruff]
 line-length = 100
