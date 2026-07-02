@@ -9,6 +9,7 @@ dependencies = [
   "pika>=1.3.2",
   "psycopg[binary]>=3.2.1",
   "pydantic>=2.8.2",
+  "pyjwt[crypto]>=2.9.0",
   "sqlalchemy>=2.0.32",
   "uvicorn[standard]>=0.30.5",
 ]
@@ -30,11 +31,6 @@ packages = ["application", "domain", "infrastructure", "interface"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
-markers = [
-  "unit: domain/application unit tests",
-  "interface: REST, DTO, env, and published-language contract tests",
-  "integration: cross-layer, persistence, and event integration tests",
-]
 
 [tool.ruff]
 line-length = 100

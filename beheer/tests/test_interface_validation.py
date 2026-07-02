@@ -6,9 +6,6 @@ from pydantic import ValidationError
 from interface.schemas import RegistreerKunstwerkRequest, StelEisenVastRequest
 
 
-pytestmark = pytest.mark.interface
-
-
 def test_request_modellen_weigeren_extra_velden() -> None:
     with pytest.raises(ValidationError):
         RegistreerKunstwerkRequest.model_validate(

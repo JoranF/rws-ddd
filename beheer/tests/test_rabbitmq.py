@@ -15,9 +15,6 @@ from infrastructure.rabbitmq_consumer import (
 from tests.fakes import FixedClock
 
 
-pytestmark = pytest.mark.interface
-
-
 def test_rabbitmq_envelope_volgt_published_language() -> None:
     publisher = RabbitMqEventPublisher("amqp://rws:rws@localhost:5672")
     envelope = publisher.envelope(
