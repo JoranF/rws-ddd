@@ -51,8 +51,11 @@ Inspectie · Factuur (FactuurId) · AannemerId · Status ·
 OpenAPI-documentatie: `GET /api/docs`.
 
 ## Implementatie
-- **Geplande stack (Fase 1):** Node.js 22, TypeScript, Fastify, Prisma (PostgreSQL
-  `onderhoud_db`), amqplib, Vitest — zelfde patronen als de Contract-service.
+- **Geplande stack (Fase 1):** Node.js 22, TypeScript, **NestJS**, **TypeORM** (PostgreSQL
+  `onderhoud_db`), amqplib, `@nestjs/swagger`, Jest — zoals afgesproken in
+  [docs/vervolgstappen.md](../docs/vervolgstappen.md) (elke context een eigen stack).
+- **Domein en application zijn framework-vrij** (pure TypeScript, geen NestJS/TypeORM);
+  alleen infrastructure en interface kennen het framework.
 - **Plan:** [docs/superpowers/plans/2026-07-01-onderhoud-service-fase-1.md](../docs/superpowers/plans/2026-07-01-onderhoud-service-fase-1.md)
   (18 taken, TDD, walking-skeleton-first).
 
