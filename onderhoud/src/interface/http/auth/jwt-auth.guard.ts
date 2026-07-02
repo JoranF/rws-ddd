@@ -36,6 +36,9 @@ export class JwtAuthGuard implements CanActivate {
     if (!this.config.ingeschakeld) return true;
 
     const request = context.switchToHttp().getRequest<Request>();
+    // Een APP_GUARD werkt app-breed (ook op /health en de docs); alleen /api is beschermd.
+    if (!this.isBeschermdPad(request)) return true;
+
     const payload = await this.verifieerToken(request);
 
     if (this.isSchrijfactie(request.method) && !this.heeftVereisteRol(payload)) {
@@ -67,6 +70,11 @@ export class JwtAuthGuard implements CanActivate {
 
   private isSchrijfactie(methode: string): boolean {
     return SCHRIJFMETHODEN.has(methode.toUpperCase());
+  }
+
+  private isBeschermdPad(request: Request): boolean {
+    const pad = (request.path ?? request.url ?? '').split('?')[0];
+    return pad === '/api' || pad.startsWith('/api/');
   }
 
   private heeftVereisteRol(payload: JWTPayload): boolean {
