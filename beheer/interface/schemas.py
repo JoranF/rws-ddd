@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from domain.model import (
     Eis,
@@ -16,7 +16,7 @@ from domain.model import (
 
 
 class ApiModel(BaseModel):
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 class RegistreerKunstwerkRequest(ApiModel):
