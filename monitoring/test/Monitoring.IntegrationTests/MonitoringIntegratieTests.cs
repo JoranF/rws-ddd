@@ -61,6 +61,24 @@ public class MonitoringIntegratieTests(MonitoringAppFixture fixture) : IClassFix
     }
 
     [Fact]
+    public async Task Rapport_met_tijdzone_offset_wordt_als_UTC_verwerkt()
+    {
+        var client = fixture.Factory.CreateClient();
+        (await client.PostAsJsonAsync("/api/sessies", new { kunstwerkId = "KW-D" })).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync("/api/metingen", new { kunstwerkId = "KW-D", sensorType = "Trilling", waarde = 2.0 }))
+            .EnsureSuccessStatusCode();
+
+        // Client stuurt een offset (geen UTC): de API moet dit normaliseren i.p.v. 500 geven.
+        var rapport = await client.PostAsJsonAsync("/api/rapporten",
+            new { kunstwerkId = "KW-D", periodeStart = "2026-07-01T00:00:00+02:00", periodeEind = "2026-07-03T00:00:00+02:00" });
+        rapport.EnsureSuccessStatusCode();
+
+        var netwerk = await client.PostAsJsonAsync("/api/netwerkrapportages",
+            new { periodeStart = "2026-07-01T00:00:00+02:00", periodeEind = "2026-07-03T00:00:00+02:00" });
+        netwerk.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
     public async Task Beheer_kunstwerk_event_vult_het_readmodel_idempotent()
     {
         await using var conn = await new ConnectionFactory { Uri = new Uri(fixture.AmqpUrl) }.CreateConnectionAsync();

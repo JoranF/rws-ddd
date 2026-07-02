@@ -24,7 +24,8 @@ KunstwerkReferentie (verwijzing naar het kunstwerk in Beheer).
 
 ## Integratie
 - **Publiceert:** `monitoring.meting.geregistreerd`, `monitoring.incident.aangemaakt`,
-  `monitoring.incident.opgelost`, `monitoring.rapport.opgesteld`.
+  `monitoring.incident.opgelost`, `monitoring.rapport.opgesteld`,
+  `monitoring.netwerkrapportage.opgesteld`.
 - **Consumeert:** `beheer.kunstwerk.geregistreerd`, `beheer.kunstwerk.buitengebruikgesteld`
   (weten welke kunstwerken gemonitord moeten worden).
 - **Relaties:** supplier van **Onderhoud** en **Beheer**; **Contract** conformeert zich aan

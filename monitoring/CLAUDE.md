@@ -17,5 +17,6 @@ Lees eerst `/CLAUDE.md` en `/docs/conventions.md`. Werk alleen binnen deze conte
 
 ## Integratie
 - **Publiceert:** `monitoring.meting.geregistreerd`, `monitoring.incident.aangemaakt`,
-  `monitoring.incident.opgelost`, `monitoring.rapport.opgesteld`.
+  `monitoring.incident.opgelost`, `monitoring.rapport.opgesteld`,
+  `monitoring.netwerkrapportage.opgesteld`.
 - **Consumeert:** `beheer.kunstwerk.*`.

@@ -64,6 +64,7 @@ builder.Services.AddScoped(sp => new StelNetwerkrapportageOp(
 builder.Services.AddHostedService<BeheerKunstwerkConsumer>();
 builder.Services.AddHostedService<OutboxRelay>();
 
+builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new UtcDateTimeConverter()));
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
