@@ -1,0 +1,423 @@
+/* RWS Infraportaal — ontwerptaal
+   Palet: rijksblauw + signaalgeel (het wegbeeld van Rijkswaterstaat), koel lichtgrijs
+   werkvlak. Type: IBM Plex Sans (UI) + IBM Plex Mono (ID's, meetwaarden, matrixbord). */
+
+:root {
+  --blauw: #154273;          /* rijksoverheid-donkerblauw */
+  --blauw-diep: #0d2c4f;
+  --geel: #ffc917;           /* RWS-signaalgeel */
+  --water: #eef1f4;          /* werkvlak */
+  --wit: #ffffff;
+  --inkt: #16283c;
+  --staal: #5a6b7c;          /* secundaire tekst */
+  --lijn: #d5dde3;
+
+  --ok: #1e7a4f;
+  --fout: #b3261e;
+  --let-op: #9a6700;
+
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --schaduw: 0 1px 2px rgba(22, 40, 60, 0.08), 0 2px 8px rgba(22, 40, 60, 0.05);
+  --radius: 6px;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--inkt);
+  background: var(--water);
+}
+
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 22px; }
+h2 { font-size: 15px; }
+h3 { font-size: 14px; }
+
+a { color: var(--blauw); }
+
+:focus-visible { outline: 2px solid var(--geel); outline-offset: 2px; }
+
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.stil { color: var(--staal); }
+.rechts { text-align: right; }
+
+/* ---------------------------------------------------------------- login */
+.login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(320px, 5fr) minmax(360px, 4fr);
+}
+
+.login__paneel {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(160deg, var(--blauw) 0%, var(--blauw-diep) 100%);
+  color: var(--wit);
+  display: flex;
+  align-items: center;
+}
+
+/* De gele baan: het diagonale logomotief van Rijkswaterstaat. */
+.login__baan {
+  position: absolute;
+  inset: -20% auto -20% 58%;
+  width: 88px;
+  background: var(--geel);
+  transform: rotate(14deg);
+}
+
+.login__paneel-inhoud {
+  position: relative;
+  max-width: 460px;
+  padding: 48px;
+}
+
+.login__paneel h1 { font-size: 30px; letter-spacing: -0.02em; }
+.login__paneel p { color: #c6d4e2; max-width: 40ch; }
+
+.login__contexts { list-style: none; margin: 28px 0 0; padding: 0; display: grid; gap: 10px; }
+.login__contexts li { display: flex; align-items: baseline; gap: 10px; color: #c6d4e2; }
+.login__contexts strong { color: var(--wit); }
+.login__blok { width: 10px; height: 10px; border-radius: 2px; flex: none; align-self: center; }
+
+.login__formulier { display: flex; align-items: center; justify-content: center; padding: 32px; }
+.login__formulier form { width: 100%; max-width: 360px; display: grid; gap: 14px; }
+.login__formulier h2 { font-size: 20px; }
+
+.login__fout { margin: 0; color: var(--fout); }
+
+.login__demo { border-top: 1px solid var(--lijn); padding-top: 14px; display: grid; gap: 8px; }
+.login__demo > span { color: var(--staal); font-size: 12.5px; }
+.login__demo code { font-family: var(--mono); background: var(--water); padding: 1px 5px; border-radius: 3px; }
+.login__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chip {
+  font: 500 12.5px var(--mono);
+  color: var(--blauw);
+  background: var(--water);
+  border: 1px solid var(--lijn);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--blauw); }
+
+/* ---------------------------------------------------------------- app-frame */
+.app { display: grid; grid-template-columns: 264px 1fr; min-height: 100vh; }
+
+.zijbalk {
+  background: var(--blauw-diep);
+  color: #c6d4e2;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.zijbalk__merk { display: flex; gap: 10px; align-items: center; padding: 2px 8px; }
+.zijbalk__merk strong { color: var(--wit); display: block; font-size: 15px; letter-spacing: -0.01em; }
+.zijbalk__merk small { color: #7e93a8; font-size: 11px; }
+.merk__vlak {
+  width: 26px; height: 26px; flex: none; border-radius: 4px;
+  background: linear-gradient(135deg, var(--geel) 0 46%, var(--blauw) 54% 100%);
+}
+
+.zijbalk__nav { display: grid; gap: 14px; flex: 1; }
+
+.navgroep { display: grid; gap: 1px; }
+.navgroep__kop { display: flex; align-items: center; gap: 8px; padding: 0 8px 4px; }
+.navgroep__blok { width: 8px; height: 8px; border-radius: 2px; background: var(--ctx); }
+.navgroep__naam { font-weight: 600; color: var(--wit); font-size: 13px; }
+.navgroep__tag {
+  margin-left: auto;
+  font: 500 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7e93a8;
+}
+.navgroep--eigen .navgroep__tag { color: var(--geel); }
+
+.navlink {
+  display: block;
+  padding: 5px 8px 5px 24px;
+  border-radius: 4px;
+  color: #a9bbcb;
+  text-decoration: none;
+  font-size: 13px;
+  border-left: 2px solid transparent;
+}
+.navlink:hover { color: var(--wit); background: rgba(255, 255, 255, 0.05); }
+.navlink--actief {
+  color: var(--wit);
+  background: rgba(255, 255, 255, 0.08);
+  border-left-color: var(--ctx);
+}
+
+/* ---------------------------------------------------------------- matrixbord */
+.matrixbord {
+  background: #061321;
+  border: 1px solid #1d3049;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+.matrixbord__kop {
+  font: 600 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #55708c;
+}
+.matrixbord__baan { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); font-size: 12px; }
+.matrixbord__signaal { font-size: 11px; }
+.matrixbord__baan--open .matrixbord__signaal { color: #35d07f; text-shadow: 0 0 6px rgba(53, 208, 127, 0.7); }
+.matrixbord__baan--dicht .matrixbord__signaal { color: #ff5449; text-shadow: 0 0 6px rgba(255, 84, 73, 0.7); }
+.matrixbord__baan--onbekend .matrixbord__signaal { color: #55708c; }
+.matrixbord__naam { color: #c6d4e2; }
+.matrixbord__poort { margin-left: auto; color: #55708c; }
+
+.zijbalk__gebruiker {
+  border-top: 1px solid #1d3049;
+  padding-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.gebruiker__info strong { color: var(--wit); display: block; font-size: 13px; }
+.gebruiker__info small { color: #7e93a8; font-size: 11px; }
+
+/* ---------------------------------------------------------------- inhoud */
+.inhoud { padding: 28px 32px 48px; max-width: 1180px; width: 100%; }
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.eyebrow {
+  font: 600 10.5px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.alleen-lezen {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fdf6e3;
+  border: 1px solid #ecd9a0;
+  color: #6d5410;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 18px;
+}
+.alleen-lezen__oog { font-size: 15px; }
+
+/* ---------------------------------------------------------------- KPI's */
+.kpi-rij {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.kpi {
+  background: var(--wit);
+  border: 1px solid var(--lijn);
+  border-radius: var(--radius);
+  box-shadow: var(--schaduw);
+  padding: 14px 16px;
+  display: grid;
+  gap: 2px;
+}
+.kpi__waarde { font: 600 26px var(--mono); letter-spacing: -0.02em; }
+.kpi__label { color: var(--staal); font-size: 12.5px; }
+.kpi--ok .kpi__waarde { color: var(--ok); }
+.kpi--let-op .kpi__waarde { color: var(--let-op); }
+.kpi--fout .kpi__waarde { color: var(--fout); }
+
+/* ---------------------------------------------------------------- secties & tabellen */
+.sectie { margin-bottom: 26px; }
+.sectie__kop { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.sectie__kop h2 { text-transform: none; }
+
+.tabel-wrap {
+  background: var(--wit);
+  border: 1px solid var(--lijn);
+  border-radius: var(--radius);
+  box-shadow: var(--schaduw);
+  overflow-x: auto;
+}
+.tabel { width: 100%; border-collapse: collapse; }
+.tabel th {
+  text-align: left;
+  font: 600 10.5px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--staal);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--lijn);
+  white-space: nowrap;
+}
+.tabel th.rechts { text-align: right; }
+.tabel td { padding: 9px 14px; border-bottom: 1px solid #e8edf1; vertical-align: top; }
+.tabel tbody tr:last-child td { border-bottom: none; }
+.tabel tr.klikbaar { cursor: pointer; }
+.tabel tr.klikbaar:hover td { background: #f4f7fa; }
+
+/* ---------------------------------------------------------------- pillen */
+.pil {
+  display: inline-block;
+  font: 500 11.5px var(--mono);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pil--ok { background: #e3f2e9; color: var(--ok); }
+.pil--fout { background: #fbe7e5; color: var(--fout); }
+.pil--let-op { background: #fdf3d7; color: var(--let-op); }
+.pil--neutraal { background: var(--water); color: var(--staal); }
+
+/* ---------------------------------------------------------------- fouten */
+.fout-blok {
+  background: #fbe7e5;
+  border: 1px solid #eec4c0;
+  border-radius: var(--radius);
+  color: #7a1f1a;
+  padding: 12px 14px;
+}
+.fout-blok pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font: 12px var(--mono); }
+
+/* ---------------------------------------------------------------- formulieren */
+.actie-form {
+  background: var(--wit);
+  border: 1px solid var(--lijn);
+  border-left: 3px solid var(--geel);
+  border-radius: var(--radius);
+  box-shadow: var(--schaduw);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 26px;
+}
+.actie-form__velden {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.veld { display: grid; gap: 4px; }
+.veld > span { font-size: 12.5px; font-weight: 500; }
+.veld em { color: var(--fout); font-style: normal; }
+.veld small { color: var(--staal); font-size: 11.5px; }
+
+input, select {
+  font: 14px var(--sans);
+  color: var(--inkt);
+  background: var(--wit);
+  border: 1px solid var(--lijn);
+  border-radius: 4px;
+  padding: 7px 10px;
+  width: 100%;
+}
+input:hover, select:hover { border-color: #b3c1cc; }
+
+.knop {
+  font: 500 13.5px var(--sans);
+  color: var(--wit);
+  background: var(--blauw);
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  justify-self: start;
+}
+.knop:hover { background: #1b548f; }
+.knop:disabled { opacity: 0.6; cursor: default; }
+.knop--breed { width: 100%; justify-self: stretch; }
+.knop--gevaar { background: var(--fout); }
+.knop--gevaar:hover { background: #99201a; }
+.knop--stil { background: transparent; color: #a9bbcb; border: 1px solid #1d3049; padding: 5px 10px; }
+.knop--stil:hover { background: rgba(255, 255, 255, 0.06); color: var(--wit); }
+
+/* ---------------------------------------------------------------- detail */
+.def-lijst {
+  background: var(--wit);
+  border: 1px solid var(--lijn);
+  border-radius: var(--radius);
+  box-shadow: var(--schaduw);
+  margin: 0 0 26px;
+  padding: 6px 16px;
+}
+.def-lijst__rij {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e8edf1;
+}
+.def-lijst__rij:last-child { border-bottom: none; }
+.def-lijst dt { color: var(--staal); font-size: 12.5px; padding-top: 1px; }
+.def-lijst dd { margin: 0; }
+
+.terug { display: inline-block; margin-bottom: 12px; font-size: 13px; }
+
+/* ---------------------------------------------------------------- toasts */
+.toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 8px;
+  z-index: 50;
+  max-width: 420px;
+}
+.toast {
+  background: var(--wit);
+  border: 1px solid var(--lijn);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(22, 40, 60, 0.18);
+  padding: 10px 14px;
+  cursor: pointer;
+  animation: toast-in 160ms ease-out;
+}
+.toast--success { border-left-color: var(--ok); }
+.toast--error { border-left-color: var(--fout); }
+.toast--info { border-left-color: var(--blauw); }
+.toast pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; font: 11.5px var(--mono); color: var(--staal); }
+
+@keyframes toast-in {
+  from { transform: translateY(6px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
+/* ---------------------------------------------------------------- responsief */
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .zijbalk { position: static; height: auto; }
+  .login { grid-template-columns: 1fr; }
+  .login__paneel { min-height: 260px; }
+  .inhoud { padding: 20px 16px 40px; }
+  .def-lijst__rij { grid-template-columns: 1fr; gap: 2px; }
+}

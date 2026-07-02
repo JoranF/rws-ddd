@@ -1,0 +1,17 @@
+server {
+  listen 80;
+
+  location = /health { return 200 'ok'; add_header Content-Type text/plain; }
+
+  # API-verkeer onder /svc/ zodat de SPA-routes (/beheer, /monitoring, ...) vrij
+  # blijven voor de frontend-router — ook bij een harde refresh of deep-link.
+  location /svc/contract/   { proxy_pass ${CONTRACT_URL}/; }
+  location /svc/monitoring/ { proxy_pass ${MONITORING_URL}/; }
+  location /svc/onderhoud/  { proxy_pass ${ONDERHOUD_URL}/; }
+  location /svc/beheer/     { proxy_pass ${BEHEER_URL}/; }
+
+  location / {
+    root /usr/share/nginx/html;
+    try_files $uri /index.html;
+  }
+}

@@ -102,6 +102,18 @@ services:
     depends_on: [contract, monitoring, onderhoud, beheer]
     networks: [rws-net]
 
+  frontend-portal:
+    build: ./frontends/portal
+    container_name: rws-frontend-portal
+    environment:
+      CONTRACT_URL: http://contract:8001
+      MONITORING_URL: http://monitoring:8002
+      ONDERHOUD_URL: http://onderhoud:8003
+      BEHEER_URL: http://beheer:8004
+    ports: ["8006:80"]
+    depends_on: [contract, monitoring, onderhoud, beheer]
+    networks: [rws-net]
+
 networks:
   rws-net:
     name: rws-net
