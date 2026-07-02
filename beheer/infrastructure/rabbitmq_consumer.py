@@ -139,7 +139,9 @@ def monitoring_rapport_command_from_envelope(envelope: object) -> VerwerkRapport
         envelope=envelope,
         expected_event_type="monitoring.rapport.opgesteld",
         expected_producer="monitoring",
-        required_data_fields=("incidentId", "kunstwerkId", "resultaten"),
+        # incidentId is bewust niet verplicht: Monitoring stuurt null zolang er geen
+        # (open) incident is — juist die gezonde rapporten moet Beheer ook ontvangen.
+        required_data_fields=("kunstwerkId", "resultaten"),
         external_id_fields=("rapportId", "incidentId"),
         values_fields=("resultaten",),
     )
@@ -243,14 +245,21 @@ def _extract_numeric_values(source: Any) -> dict[str, float]:
                 numeric = _numeric_from_mapping(value)
                 if name and numeric is not None:
                     values[str(name)] = numeric
+            elif isinstance(value, list):
+                # geneste lijsten, zoals Monitoring's resultaten.perSensor
+                values.update(_extract_numeric_values(value))
     elif isinstance(source, list):
         for item in source:
             if not isinstance(item, dict):
                 continue
-            name = item.get("meetwaarde") or item.get("code") or item.get("naam")
+            name = item.get("meetwaarde") or item.get("code") or item.get("naam") or item.get("sensorType")
             numeric = _numeric_from_mapping(item)
             if name and numeric is not None:
                 values[str(name)] = numeric
+                # sensornamen ook in kleine letters, zodat een eis-meetwaarde als
+                # 'trilling' de sensor 'Trilling' uit Monitoring vindt
+                if item.get("sensorType") and str(name).lower() != str(name):
+                    values[str(name).lower()] = numeric
     return values
 
 
@@ -258,6 +267,8 @@ def _numeric_from_mapping(value: dict[str, Any]) -> float | None:
     numeric = value.get("waarde")
     if numeric is None:
         numeric = value.get("value")
+    if numeric is None:
+        numeric = value.get("gemiddelde")
     return _numeric_value(numeric)
 
 

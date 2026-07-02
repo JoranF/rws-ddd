@@ -67,6 +67,57 @@ def test_monitoring_rapport_wordt_streng_naar_command_gemapt() -> None:
     assert command.occurred_at == datetime.fromisoformat("2026-07-01T12:00:00+00:00")
 
 
+def test_monitoring_rapport_zonder_incident_wordt_geaccepteerd() -> None:
+    event_id = str(uuid4())
+
+    command = monitoring_rapport_command_from_envelope(
+        {
+            "eventId": event_id,
+            "eventType": "monitoring.rapport.opgesteld",
+            "occurredAt": "2026-07-02T12:00:00Z",
+            "producer": "monitoring",
+            "version": 1,
+            "data": {
+                "incidentId": None,  # gezond kunstwerk: geen (open) incident
+                "kunstwerkId": "KW-1",
+                "resultaten": {"totaalIncidenten": 0, "openIncidenten": 0},
+            },
+        }
+    )
+
+    assert command.extern_rapport_id == event_id  # valt terug op eventId
+    assert command.rapportwaarden == {"totaalIncidenten": 0.0, "openIncidenten": 0.0}
+
+
+def test_monitoring_rapport_vertaalt_per_sensor_gemiddelden() -> None:
+    command = monitoring_rapport_command_from_envelope(
+        {
+            "eventId": str(uuid4()),
+            "eventType": "monitoring.rapport.opgesteld",
+            "occurredAt": "2026-07-02T12:00:00Z",
+            "producer": "monitoring",
+            "version": 1,
+            "data": {
+                "incidentId": "INC-1",
+                "kunstwerkId": "KW-1",
+                "resultaten": {
+                    "perSensor": [
+                        {"sensorType": "Trilling", "aantal": 3, "min": 2.0, "max": 12.0, "gemiddelde": 8.5}
+                    ],
+                    "totaalIncidenten": 1,
+                    "openIncidenten": 1,
+                    "opgelosteIncidenten": 0,
+                    "incidentIds": ["INC-1"],
+                },
+            },
+        }
+    )
+
+    assert command.rapportwaarden["Trilling"] == 8.5
+    assert command.rapportwaarden["trilling"] == 8.5  # alias voor eis-meetwaarden
+    assert command.rapportwaarden["totaalIncidenten"] == 1.0
+
+
 def test_onderhoud_afgerond_haalt_onderhoudsrapport_uit_resultaat() -> None:
     command = onderhoud_afgerond_command_from_envelope(
         {
