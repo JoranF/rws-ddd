@@ -75,15 +75,15 @@ services:
   #     postgres: { condition: service_healthy }
   #   networks: [rws-net]
 
-  # onderhoud:
-  #   build: ./onderhoud
-  #   container_name: rws-onderhoud
-  #   env_file: ./onderhoud/.env
-  #   ports: ["8003:8003"]
-  #   depends_on:
-  #     rabbitmq: { condition: service_healthy }
-  #     postgres: { condition: service_healthy }
-  #   networks: [rws-net]
+  onderhoud:
+    build: ./onderhoud
+    container_name: rws-onderhoud
+    env_file: ./onderhoud/.env
+    ports: ["8003:8003"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    networks: [rws-net]
 
 networks:
   rws-net:
