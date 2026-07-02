@@ -14,7 +14,6 @@ jest.mock('jose', () => ({
   }),
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 import { JwtAuthGuard } from '../../src/interface/http/auth/jwt-auth.guard';
 import type { AuthConfig } from '../../src/infrastructure/config/config';
 
