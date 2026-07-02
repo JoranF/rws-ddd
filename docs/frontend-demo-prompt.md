@@ -50,6 +50,21 @@ bedrijfsregels, alleen presentatie + API-aanroepen. Het enige bestand buiten je 
 map dat je aanraakt is docker-compose.yml, waar je jouw eigen frontend-blok toevoegt
 (zie onder).
 
+## Harde eis: LIVE data, geen mocks
+- ALLE data in de UI komt uit de echte, draaiende services — er bestaat geen mockdata,
+  geen fixtures, geen hardgecodeerde voorbeeldrijen, geen "fallback data" als een
+  request faalt. Als een service niet bereikbaar is, toont het paneel een duidelijke
+  foutstatus (rode badge + melding), nooit nepdata.
+- Elke knop doet een echte HTTP-call; elke lijst is het echte GET-resultaat. De demo
+  draait op wat er werkelijk in de services gebeurt (dat is het hele punt van de
+  presentatie: de events stromen live tussen de contexts).
+- De stack draait al (docker compose, poorten 8001-8004). Definition of done: jij
+  verifieert tegen de draaiende stack dat (1) de vier health-badges groen worden en
+  (2) demo-stap 1 t/m 11 hieronder end-to-end klikbaar werkt met echte responses.
+  Als je tool commando's kan draaien: check eerst `curl http://localhost:8004/health`
+  e.d.; zo niet, vraag de gebruiker de stappen mee te klikken. Lever niets op dat
+  alleen "eruitziet alsof het werkt".
+
 ## Tech-eisen
 - Vite + React (TypeScript mag), styling vrij (Tailwind prima). Geen backend-code,
   geen auth.
