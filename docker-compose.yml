@@ -85,6 +85,18 @@ services:
   #     postgres: { condition: service_healthy }
   #   networks: [rws-net]
 
+  frontend-beheer:
+    build: ./frontends/beheer
+    container_name: rws-frontend-beheer
+    environment:
+      CONTRACT_URL: http://contract:8001
+      MONITORING_URL: http://monitoring:8002
+      ONDERHOUD_URL: http://onderhoud:8003
+      BEHEER_URL: http://beheer:8004
+    ports: ["8008:80"]
+    depends_on: [beheer]
+    networks: [rws-net]
+
 networks:
   rws-net:
     name: rws-net
