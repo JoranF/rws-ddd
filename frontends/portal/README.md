@@ -9,12 +9,12 @@ Ontwerp: `docs/superpowers/specs/2026-07-02-portal-frontend-design.md`.
 
 ## Demo-gebruikers
 
-| E-mail       | Rol               | Eigen context |
-|--------------|-------------------|---------------|
-| anna@rws.nl  | Beheerder         | Beheer        |
-| mark@rws.nl  | Monitoringanalist | Monitoring    |
-| kees@bam.nl  | Aannemer          | Onderhoud     |
-| lisa@rws.nl  | Contractmanager   | Contract      |
+| E-mail       | Naam           | Rol               | Organisatie     | Eigen context |
+|--------------|----------------|-------------------|-----------------|---------------|
+| anna@rws.nl  | Anna van Dijk  | Beheerder         | Rijkswaterstaat | Beheer        |
+| mark@rws.nl  | Mark Jansen    | Monitoringanalist | Rijkswaterstaat | Monitoring    |
+| kees@bam.nl  | Kees Bakker    | Aannemer          | BAM Infra       | Onderhoud     |
+| lisa@rws.nl  | Lisa de Vries  | Contractmanager   | Rijkswaterstaat | Contract      |
 
 Wachtwoord voor iedereen: `rws-demo`. De login is frontend-only (localStorage) —
 een rollenmodel voor het verhaal, geen security-feature; de service-API's blijven open.

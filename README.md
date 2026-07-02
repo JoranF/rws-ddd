@@ -47,6 +47,27 @@ Je eigen service toevoegen aan de lokale stack:
 3. Uncomment je servicblok in [`docker-compose.yml`](docker-compose.yml).
 4. `docker compose up --build`.
 
+## Frontends
+
+| Frontend | Map | Poort | Wat het is |
+|----------|-----|-------|------------|
+| **Portal** | [`frontends/portal/`](frontends/portal/) | 8006 | Werkportaal met login: elke rol werkt in zijn eigen bounded context, de rest is alleen-lezen |
+| **Regiekamer (Sven)** | [`frontends/sven/`](frontends/sven/) | 8005 | Demo-dashboard voor de presentatie: demo-script + context-map op één scherm |
+
+### Inloggegevens portal (demo)
+
+Wachtwoord voor iedereen: **`rws-demo`** — de login is frontend-only (geen echte auth).
+
+| E-mailadres  | Naam           | Rol               | Eigen context |
+|--------------|----------------|-------------------|---------------|
+| anna@rws.nl  | Anna van Dijk  | Beheerder         | Beheer        |
+| mark@rws.nl  | Mark Jansen    | Monitoringanalist | Monitoring    |
+| kees@bam.nl  | Kees Bakker    | Aannemer (BAM)    | Onderhoud     |
+| lisa@rws.nl  | Lisa de Vries  | Contractmanager   | Contract      |
+
+Starten: `docker compose up --build frontend-portal` → http://localhost:8006
+(of lokaal ontwikkelen: `cd frontends/portal && npm install && npm run dev` → http://localhost:5174).
+
 ## Documentatie
 
 - **[docs/DDD verslag, Laurens, Sven, Joran, Kaleb.docx](docs/DDD%20verslag,%20Laurens,%20Sven,%20Joran,%20Kaleb.docx)** — het **leidende** DDD-verslag met alle verduidelijking (analyse, event storming, context mapping, ubiquitous language, tactisch ontwerp per context)
