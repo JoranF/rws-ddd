@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from uuid import uuid4
 
 from application.dto import (
     RegistreerKunstwerkCommand,
@@ -25,6 +26,10 @@ from domain.model import (
     RapportageResultaat,
 )
 from domain.services import EisenValidator
+from infrastructure.rabbitmq_consumer import (
+    monitoring_rapport_command_from_envelope,
+    onderhoud_afgerond_command_from_envelope,
+)
 from tests.fakes import FakePublisher, FakeUnitOfWork, FixedClock, SequenceIdGenerator
 
 
@@ -178,3 +183,98 @@ def test_onderhoud_afgerond_wordt_beoordeeld_tegen_onderhoudseisen() -> None:
     )
 
     assert beoordeling.resultaat == RapportageResultaat.VOLDOET
+
+
+def test_monitoring_event_envelope_leidt_tot_netwerkrapportage_beoordeling() -> None:
+    uow = FakeUnitOfWork()
+    publisher = FakePublisher()
+    clock = FixedClock()
+    ids = SequenceIdGenerator()
+    kunstwerk = RegistreerKunstwerk(uow, publisher, clock, ids)(
+        RegistreerKunstwerkCommand("Tunnel B", KunstwerkType.TUNNEL, "A4")
+    )
+    StelOntwerpeisenVast(uow, publisher, clock, ids)(
+        StelEisenVastCommand(
+            kunstwerk_id=str(kunstwerk.kunstwerk_id),
+            eisen=[
+                Eis(
+                    code="TRILLING",
+                    omschrijving="Trilling maximaal",
+                    meetwaarde="trilling",
+                    operator=EisOperator.KLEINER_OF_GELIJK,
+                    grenswaarde=5.0,
+                    eenheid="mm/s",
+                )
+            ],
+        )
+    )
+    event_id = str(uuid4())
+    command = monitoring_rapport_command_from_envelope(
+        {
+            "eventId": event_id,
+            "eventType": "monitoring.rapport.opgesteld",
+            "occurredAt": "2026-07-01T12:00:00Z",
+            "producer": "monitoring",
+            "version": 1,
+            "data": {
+                "incidentId": "INC-2",
+                "kunstwerkId": str(kunstwerk.kunstwerk_id),
+                "resultaten": {"trilling": 4.1},
+            },
+        }
+    )
+    use_case = VerwerkMonitoringRapport(uow, EisenValidator(), clock, ids)
+
+    eerste = use_case(command)
+    tweede = use_case(command)
+
+    assert eerste.beoordeling_id == tweede.beoordeling_id
+    assert eerste.resultaat == RapportageResultaat.VOLDOET
+    assert event_id in uow.state.verwerkte_events
+    assert len(uow.state.beoordelingen) == 1
+
+
+def test_onderhoud_event_envelope_leidt_tot_onderhoudsrapport_beoordeling() -> None:
+    uow = FakeUnitOfWork()
+    publisher = FakePublisher()
+    clock = FixedClock()
+    ids = SequenceIdGenerator()
+    kunstwerk = RegistreerKunstwerk(uow, publisher, clock, ids)(
+        RegistreerKunstwerkCommand("Brug B", KunstwerkType.BRUG, "A15")
+    )
+    StelOnderhoudseisenVast(uow, publisher, clock, ids)(
+        StelEisenVastCommand(
+            kunstwerk_id=str(kunstwerk.kunstwerk_id),
+            eisen=[
+                Eis(
+                    code="SPOOR",
+                    omschrijving="Spoorvorming maximaal",
+                    meetwaarde="spoorvorming",
+                    operator=EisOperator.KLEINER_OF_GELIJK,
+                    grenswaarde=8.0,
+                    eenheid="mm",
+                )
+            ],
+        )
+    )
+    command = onderhoud_afgerond_command_from_envelope(
+        {
+            "eventId": str(uuid4()),
+            "eventType": "onderhoud.onderhoud.afgerond",
+            "occurredAt": "2026-07-01T12:30:00Z",
+            "producer": "onderhoud",
+            "version": 1,
+            "data": {
+                "onderhoudId": "OH-2",
+                "kunstwerkId": str(kunstwerk.kunstwerk_id),
+                "datum": "2026-07-01",
+                "resultaat": [{"meetwaarde": "spoorvorming", "waarde": 7.5}],
+            },
+        }
+    )
+
+    beoordeling = VerwerkOnderhoudAfgerond(uow, EisenValidator(), clock, ids)(command)
+
+    assert beoordeling.extern_rapport_id == "OH-2"
+    assert beoordeling.resultaat == RapportageResultaat.VOLDOET
+    assert beoordeling.bevindingen[0].eis_code == "SPOOR"
