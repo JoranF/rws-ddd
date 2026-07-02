@@ -18,17 +18,18 @@ Standaard-env per service (zie `docs/conventions.md` §5): `SERVICE_PORT`, `DATA
 `RABBITMQ_URL`. Elke service heeft `GET /health` (checkt db + broker, 200/503) en integreert
 uitsluitend via de topic-exchange `rws.events` (envelope: `docs/events.md`).
 
-Daarnaast komt er een **frontend-demo-dashboard** in `frontend/` (nginx + statische build,
-lokaal poort 8005, genereren via [docs/frontend-demo-prompt.md](../../frontend-demo-prompt.md));
-deployen als vijfde Application onder `demo.<domein>` — zie §3b.
+Daarnaast komen er **vier frontend-demo-dashboards** (één per teamlid, elk vrij in stijl)
+in `frontends/<naam>/` (nginx + statische build, lokaal poorten 8005-8008, genereren via
+[docs/frontend-demo-prompt.md](../../frontend-demo-prompt.md)); elk deployen als eigen
+Application onder `demo-<naam>.<domein>` — zie §3b.
 
 ## 1. Eenmalige voorbereiding (door één teamlid)
 
 1. **Server**: VPS met Docker; installeer Dokploy (`curl -sSL https://dokploy.com/install.sh | sh`).
    Open poorten 80/443 (Traefik) en 3000 (Dokploy-UI, daarna achter eigen domein zetten).
-2. **DNS**: wildcard of vijf subdomeinen naar de VPS:
-   `contract.<domein>`, `monitoring.<domein>`, `onderhoud.<domein>`, `beheer.<domein>`
-   en `demo.<domein>` (het frontend-dashboard, zie §3b).
+2. **DNS**: wildcard (aanrader) of acht subdomeinen naar de VPS: vier services
+   (`contract.<domein>`, `monitoring.<domein>`, `onderhoud.<domein>`, `beheer.<domein>`)
+   plus vier frontend-dashboards (`demo-<naam>.<domein>` per teamlid, zie §3b).
 3. **GitHub koppelen**: Dokploy → Settings → Git → koppel `JoranF/rws-ddd` (GitHub App of
    deploy key), branch `main`.
 4. Maak het Dokploy **Project "RWS-DDD"**.
@@ -94,34 +95,44 @@ services starten zelfstandig; zie stap 4 voor de functionele volgorde):
 7. **Deploy** en controleer de logs: elke service draait zijn migraties bij start; bij
    beheer zie je `alembic upgrade head`, bij contract `prisma migrate deploy`, enz.
 
-## 3b. Frontend (demo-dashboard) als vijfde Application
+## 3b. Vier frontend-dashboards, elk een eigen Application (door de eigenaar)
 
-De frontend leeft in `frontend/` in dezelfde monorepo (genereren via
-[docs/frontend-demo-prompt.md](../../frontend-demo-prompt.md); geen bounded context,
-alleen presentatie). Nginx serveert de statische build én proxyt `/beheer/...`,
-`/contract/...`, `/monitoring/...`, `/onderhoud/...` naar de interne servicenamen —
-daardoor is CORS nergens nodig en werkt hetzelfde pad lokaal en op Dokploy.
+Elk teamlid heeft een eigen demo-dashboard in `frontends/<naam>/` in dezelfde monorepo
+(genereren via [docs/frontend-demo-prompt.md](../../frontend-demo-prompt.md); geen
+bounded context, alleen presentatie). Elke frontend serveert zijn statische build via
+nginx én proxyt `/beheer/...`, `/contract/...`, `/monitoring/...`, `/onderhoud/...`
+naar de interne servicenamen — daardoor is CORS nergens nodig en werkt hetzelfde pad
+lokaal en op Dokploy. Alle vier sturen ze dezelfde services aan; alleen de UI verschilt.
 
+| Application         | Build Path            | Watch paths          | Domein                 | Lokale poort |
+|---------------------|-----------------------|----------------------|------------------------|--------------|
+| `frontend-<naam-1>` | `/frontends/<naam-1>` | `frontends/<naam-1>/**` | `demo-<naam-1>.<domein>` | 8005 |
+| `frontend-<naam-2>` | `/frontends/<naam-2>` | `frontends/<naam-2>/**` | `demo-<naam-2>.<domein>` | 8006 |
+| `frontend-<naam-3>` | `/frontends/<naam-3>` | `frontends/<naam-3>/**` | `demo-<naam-3>.<domein>` | 8007 |
+| `frontend-<naam-4>` | `/frontends/<naam-4>` | `frontends/<naam-4>/**` | `demo-<naam-4>.<domein>` | 8008 |
+
+Per frontend (zelfde stappen, alleen naam/domein verschilt):
 1. Project → Create → **Application**, repo `JoranF/rws-ddd`, branch `main`,
-   **Build Path = `/frontend`**, Build Type = Dockerfile, watch paths `frontend/**`.
-2. **Environment variables** — wijs naar de interne hostnamen van de vier
-   service-Applications op het `dokploy-network` (Dokploy toont die per app):
+   Build Path/watch paths uit de tabel, Build Type = Dockerfile.
+2. **Environment variables** — voor alle vier identiek; wijs naar de interne hostnamen
+   van de service-Applications op het `dokploy-network` (Dokploy toont die per app):
    ```
    CONTRACT_URL=http://<interne-host-contract>:8001
    MONITORING_URL=http://<interne-host-monitoring>:8002
    ONDERHOUD_URL=http://<interne-host-onderhoud>:8003
    BEHEER_URL=http://<interne-host-beheer>:8004
    ```
-3. **Domain** = `demo.<domein>`, poortdoel **80** (nginx), HTTPS aan.
+3. **Domain** = `demo-<naam>.<domein>`, poortdoel **80** (nginx), HTTPS aan.
 4. **Health check path = `/health`** (nginx geeft daar zelf 200 op).
-5. Deploy; het dashboard op `https://demo.<domein>` stuurt nu alle services aan.
-   De vier service-domeinen blijven daarnaast gewoon bruikbaar voor directe API-calls
+5. Deploy. Door de watch paths deployt een push alleen de eigen frontend; de
+   service-domeinen blijven daarnaast bruikbaar voor directe API-calls
    (OpenAPI-docs, curl-demo's).
 
 ## 4. Verificatie na deploy (zelfde checks als lokaal)
 
-1. `curl https://<service>.<domein>/health` → 4× `200` met db+broker ok, plus
-   `https://demo.<domein>/health` → `200` en het dashboard laadt met 4 groene badges.
+1. `curl https://<service>.<domein>/health` → 4× `200` met db+broker ok, plus per
+   frontend `https://demo-<naam>.<domein>/health` → `200` en het dashboard laadt met
+   4 groene service-badges.
 2. RabbitMQ management → exchange `rws.events` bestaat; 9 durable queues met elk 1 consumer:
    `contract.beheer-kunstwerk`, `contract.beheer-ontwerpeisen`, `contract.monitoring-rapport`,
    `monitoring.beheer-kunstwerk`, `onderhoud.beheer`, `onderhoud.contract`,

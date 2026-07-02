@@ -1,18 +1,33 @@
 # Frontend-demo-prompt
 
 Geef de prompt hieronder (alles tussen de lijnen) aan een AI-tool die in de repo kan
-werken (Claude Code, Cursor, …) om het demo-dashboard te genereren. De frontend hoort
-**in deze repo** in de map `frontend/` en wordt uiteindelijk als eigen Dokploy-app
-onder een eigen (sub)domein gedeployed — zie
+werken (Claude Code, Cursor, …) om een demo-dashboard te genereren. **Elk teamlid
+genereert zijn eigen frontend** (eigen stijl, eigen tool — net als de services zelf
+stack-divers zijn); alle vier komen ze **in deze repo** onder `frontends/<naam>/` en
+worden als eigen Dokploy-app onder een eigen (sub)domein gedeployed — zie
 [het Dokploy-plan §3b](superpowers/plans/2026-07-02-dokploy-implementatieplan.md).
 
+**Poortverdeling (kies jouw regel, en gebruik die in de prompt):**
+
+| Teamlid (map)         | Lokale poort | Dokploy-domein         |
+|-----------------------|--------------|------------------------|
+| `frontends/<naam-1>/` | 8005         | `demo-<naam-1>.<domein>` |
+| `frontends/<naam-2>/` | 8006         | `demo-<naam-2>.<domein>` |
+| `frontends/<naam-3>/` | 8007         | `demo-<naam-3>.<domein>` |
+| `frontends/<naam-4>/` | 8008         | `demo-<naam-4>.<domein>` |
+
 **Gebruik:**
-1. De stack draait lokaal: `docker compose up` in de repo-root (alle vier `/health` groen).
-2. Plak de prompt in je AI-tool, geopend in de repo-root. De tool maakt `frontend/` aan
-   (incl. Dockerfile, nginx-config en compose-blok).
-3. Ontwikkelen: `cd frontend && npm install && npm run dev` (Vite, poort 5173).
-   Meedraaien in de stack: `docker compose up --build frontend` → http://localhost:8005.
-4. Committen op een eigen branch (`frontend`), PR naar `main` zoals altijd.
+1. Vervang in de prompt eerst de twee placeholders: `<NAAM>` (jouw naam, kleine letters,
+   geen spaties) en `<POORT>` (jouw poort uit de tabel).
+2. De stack draait lokaal: `docker compose up` in de repo-root (alle vier `/health` groen).
+3. Plak de prompt in je AI-tool, geopend in de repo-root. De tool maakt
+   `frontends/<NAAM>/` aan (incl. Dockerfile, nginx-config en compose-blok).
+4. Ontwikkelen: `cd frontends/<NAAM> && npm install && npm run dev` (Vite, poort 5173).
+   Meedraaien in de stack: `docker compose up --build frontend-<NAAM>` →
+   http://localhost:<POORT>.
+5. Committen op een eigen branch (`frontend-<NAAM>`), PR naar `main` zoals altijd.
+   Jij werkt alleen in `frontends/<NAAM>/` + je eigen compose-blok; blijf uit de
+   mappen van anderen.
 
 > Waarom de proxy verplicht is: de services sturen geen CORS-headers, dus een browser
 > mag niet rechtstreeks naar `localhost:8001-8004`. Lokaal lost de Vite-dev-proxy dat
@@ -28,10 +43,12 @@ infrastructuurbeheer. Het dashboard is de "regiekamer" voor een live demo tijden
 presentatie: één scherm waarmee we het hele verhaal klikbaar doorlopen en waarop je
 ZIET dat de services via events (RabbitMQ) met elkaar praten.
 
-Je werkt in de monorepo van het project. Maak de frontend aan in de map `frontend/`
-in de repo-root. De frontend is GEEN bounded context: geen bedrijfsregels, alleen
-presentatie + API-aanroepen. Raak de andere mappen niet aan, behalve het uncommenten/
-toevoegen van het frontend-blok in docker-compose.yml (zie onder).
+Je werkt in de monorepo van het project. Maak de frontend aan in de map
+`frontends/<NAAM>/` in de repo-root (er komen meerdere frontends naast elkaar — één
+per teamlid; blijf uit de andere mappen). De frontend is GEEN bounded context: geen
+bedrijfsregels, alleen presentatie + API-aanroepen. Het enige bestand buiten je eigen
+map dat je aanraakt is docker-compose.yml, waar je jouw eigen frontend-blok toevoegt
+(zie onder).
 
 ## Tech-eisen
 - Vite + React (TypeScript mag), styling vrij (Tailwind prima). Geen backend-code,
@@ -53,7 +70,7 @@ toevoegen van het frontend-blok in docker-compose.yml (zie onder).
   (b) Docker/Dokploy — nginx serveert de statische build en proxyt dezelfde paden naar
   de interne servicenamen. Maak deze twee bestanden in frontend/:
 
-  frontend/nginx.conf.template:
+  frontends/<NAAM>/nginx.conf.template:
     server {
       listen 80;
       location = /health { return 200 'ok'; add_header Content-Type text/plain; }
@@ -64,8 +81,8 @@ toevoegen van het frontend-blok in docker-compose.yml (zie onder).
       location / { root /usr/share/nginx/html; try_files $uri /index.html; }
     }
 
-  frontend/Dockerfile (multi-stage; het nginx-image draait envsubst automatisch op
-  /etc/nginx/templates/*.template):
+  frontends/<NAAM>/Dockerfile (multi-stage; het nginx-image draait envsubst automatisch
+  op /etc/nginx/templates/*.template):
     FROM node:22-alpine AS build
     WORKDIR /app
     COPY package*.json ./
@@ -77,23 +94,25 @@ toevoegen van het frontend-blok in docker-compose.yml (zie onder).
     COPY nginx.conf.template /etc/nginx/templates/default.conf.template
     EXPOSE 80
 
-  En voeg dit blok toe aan de root-docker-compose.yml (zelfde stijl als de services):
-    frontend:
-      build: ./frontend
-      container_name: rws-frontend
+  En voeg dit blok toe aan de root-docker-compose.yml (zelfde stijl als de services;
+  laat de blokken van andere frontends staan):
+    frontend-<NAAM>:
+      build: ./frontends/<NAAM>
+      container_name: rws-frontend-<NAAM>
       environment:
         CONTRACT_URL: http://contract:8001
         MONITORING_URL: http://monitoring:8002
         ONDERHOUD_URL: http://onderhoud:8003
         BEHEER_URL: http://beheer:8004
-      ports: ["8005:80"]
+      ports: ["<POORT>:80"]
       depends_on: [contract, monitoring, onderhoud, beheer]
       networks: [rws-net]
 
   Dus: GET /beheer/api/kunstwerken komt lokaal (dev) uit bij http://127.0.0.1:8004
   en in Docker/Dokploy bij ${BEHEER_URL} — de frontend-code merkt het verschil niet.
-  Op Dokploy wordt dit een eigen Application met een eigen subdomein; de vier
-  *_URL-env-vars wijzen daar naar de interne hostnamen van de service-apps.
+  Op Dokploy wordt dit een eigen Application met een eigen subdomein
+  (demo-<NAAM>.<domein>); de vier *_URL-env-vars wijzen daar naar de interne
+  hostnamen van de service-apps.
 - Alle data verandert door events tussen de services: gebruik POLLING (elke 2 s) op de
   lijst-endpoints zodat wijzigingen "vanzelf" zichtbaar worden. Highlight nieuwe rijen
   even (flash/animatie) — dat is het demo-effect.
