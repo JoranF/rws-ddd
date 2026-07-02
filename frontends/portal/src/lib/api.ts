@@ -5,7 +5,6 @@
 // Er is GEEN mockdata: faalt een request, dan gooien we — de UI toont een foutstatus.
 
 import type { ContextKey } from './contexts';
-import { accessToken } from '../auth/oidc';
 
 export type Service = ContextKey;
 
@@ -25,23 +24,12 @@ async function parse(res: Response): Promise<unknown> {
   }
 }
 
-// Stel de headers samen: JSON-content bij een body, en het Bearer-token als er een
-// sessie is. Services accepteren zonder token nog steeds GET-verkeer (AUTH_ENABLED=false),
-// maar met token dwingen ze schrijfrechten per context af.
-function headers(hasBody: boolean): HeadersInit | undefined {
-  const h: Record<string, string> = {};
-  if (hasBody) h['Content-Type'] = 'application/json';
-  const token = accessToken();
-  if (token) h['Authorization'] = `Bearer ${token}`;
-  return Object.keys(h).length ? h : undefined;
-}
-
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
       method,
-      headers: headers(body !== undefined),
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (e) {

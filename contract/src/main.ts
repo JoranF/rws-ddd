@@ -41,7 +41,6 @@ async function start(): Promise<void> {
   const kpi = new PrismaKpiReadModel(prisma);
 
   const app = await bouwApp({
-    auth: config.auth,
     health: {
       db: async () => { await prisma.$queryRaw`SELECT 1`; return true; },
       broker: async () => rabbit.isVerbonden(),

@@ -67,9 +67,6 @@ builder.Services.AddHostedService<OutboxRelay>();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new UtcDateTimeConverter()));
 builder.Services.AddOpenApi();
 
-// --- Authenticatie/autorisatie (alleen als AUTH_ENABLED=true) ---
-builder.Services.VoegAuthToe(config.Auth);
-
 var app = builder.Build();
 
 // migrate-op-startup
@@ -79,17 +76,9 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseMiddleware<DomeinFoutMiddleware>();
-
-// Auth-middleware alleen actief wanneer geregistreerd (AUTH_ENABLED=true).
-if (config.Auth.Ingeschakeld)
-{
-    app.UseAuthentication();
-    app.UseAuthorization();
-}
-
 app.MapOpenApi();
 app.MapScalarApiReference("/api/docs");
-app.MapMonitoringEndpoints(config.Auth.Ingeschakeld);
+app.MapMonitoringEndpoints();
 
 app.MapGet("/health", async (MonitoringDbContext db, RabbitMqConnectie broker) =>
 {

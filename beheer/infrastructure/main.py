@@ -22,7 +22,6 @@ from infrastructure.rabbitmq_consumer import RabbitMqConsumerRunner
 from infrastructure.runtime import SystemClock, UuidGenerator
 from infrastructure.uow import SqlAlchemyUnitOfWork
 from interface.routes import RouteServices, create_router, health_response
-from interface.security import build_auth_dependency
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +59,6 @@ def create_app() -> FastAPI:
     def verwerk_onderhoud_afgerond() -> VerwerkOnderhoudAfgerond:
         return VerwerkOnderhoudAfgerond(uow(), EisenValidator(), clock, id_generator)
 
-    auth_dependency = build_auth_dependency(settings.auth)
-
     app = FastAPI(
         title="RWS Beheer API",
         version="0.1.0",
@@ -76,7 +73,6 @@ def create_app() -> FastAPI:
                 stel_onderhoudseisen_vast=stel_onderhoudseisen_vast,
                 stel_ontwerpeisen_vast=stel_ontwerpeisen_vast,
                 queries=queries,
-                auth_dependency=auth_dependency,
             )
         )
     )
