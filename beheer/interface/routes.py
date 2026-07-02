@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from application.dto import (
     RegistreerKunstwerkCommand,
@@ -44,10 +44,14 @@ class RouteServices:
     stel_onderhoudseisen_vast: Callable[[], StelOnderhoudseisenVast]
     stel_ontwerpeisen_vast: Callable[[], StelOntwerpeisenVast]
     queries: Callable[[], BeheerQueries]
+    # Optionele auth-dependency; standaard geen (auth wordt in main.py bekabeld).
+    # Wordt op router-niveau toegepast zodat alle /api-routes beschermd zijn.
+    auth_dependency: Callable[..., object] | None = None
 
 
 def create_router(services: RouteServices) -> APIRouter:
-    router = APIRouter(prefix="/api", tags=["beheer"])
+    dependencies = [Depends(services.auth_dependency)] if services.auth_dependency else []
+    router = APIRouter(prefix="/api", tags=["beheer"], dependencies=dependencies)
 
     @router.post(
         "/kunstwerken",

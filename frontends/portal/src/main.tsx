@@ -15,6 +15,7 @@ import { AuthProvider, RequireAuth, useAuth } from './auth/auth';
 import { ToastProvider } from './lib/toast';
 import { AppLayout } from './layout/AppLayout';
 import { LoginPage } from './pages/LoginPage';
+import { AuthCallback } from './pages/AuthCallback';
 
 import { BeheerDashboard } from './features/beheer/BeheerDashboard';
 import { KunstwerkenPage } from './features/beheer/KunstwerkenPage';
@@ -59,6 +60,7 @@ createRoot(document.getElementById('root')!).render(
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/auth/callback" element={<AuthCallback />} />
               <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
                 <Route index element={<Start />} />
 

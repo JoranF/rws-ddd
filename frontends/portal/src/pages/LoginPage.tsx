@@ -1,30 +1,12 @@
-import { useState, type FormEvent } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
-import { DEMO_WACHTWOORD, GEBRUIKERS, useAuth } from '../auth/auth';
-import { CONTEXTS } from '../lib/contexts';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '../auth/auth';
+import { CONTEXTS, CONTEXT_VOLGORDE } from '../lib/contexts';
 
 export function LoginPage() {
-  const { login, gebruiker } = useAuth();
-  const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [wachtwoord, setWachtwoord] = useState('');
-  const [fout, setFout] = useState<string | null>(null);
+  const { login, gebruiker, bezig } = useAuth();
 
+  // Al ingelogd? Direct door naar het dashboard van de eigen context.
   if (gebruiker) return <Navigate to={`/${gebruiker.context}`} replace />;
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    const resultaat = login(email, wachtwoord);
-    if (resultaat) { setFout(resultaat); return; }
-    // De index-route stuurt door naar het dashboard van de eigen context.
-    navigate('/', { replace: true });
-  };
-
-  const vulIn = (mail: string) => {
-    setEmail(mail);
-    setWachtwoord(DEMO_WACHTWOORD);
-    setFout(null);
-  };
 
   return (
     <div className="login">
@@ -37,43 +19,35 @@ export function LoginPage() {
             de andere contexts zijn zichtbaar maar alleen-lezen.
           </p>
           <ul className="login__contexts">
-            {GEBRUIKERS.map(g => (
-              <li key={g.email}>
-                <span className="login__blok" style={{ background: CONTEXTS[g.context].kleur }} aria-hidden />
-                <strong>{CONTEXTS[g.context].label}</strong> — {g.rol.toLowerCase()} · {CONTEXTS[g.context].taak.toLowerCase()}
-              </li>
-            ))}
+            {CONTEXT_VOLGORDE.map(key => {
+              const ctx = CONTEXTS[key];
+              return (
+                <li key={key}>
+                  <span className="login__blok" style={{ background: ctx.kleur }} aria-hidden />
+                  <strong>{ctx.label}</strong> — {ctx.rol.toLowerCase()} · {ctx.taak.toLowerCase()}
+                </li>
+              );
+            })}
           </ul>
         </div>
       </section>
 
       <section className="login__formulier">
-        <form onSubmit={submit}>
+        <div className="login__aanmelden">
           <h2>Inloggen</h2>
-          <label className="veld">
-            <span>E-mailadres</span>
-            <input type="email" autoComplete="username" value={email}
-                   onChange={e => { setEmail(e.target.value); setFout(null); }} required />
-          </label>
-          <label className="veld">
-            <span>Wachtwoord</span>
-            <input type="password" autoComplete="current-password" value={wachtwoord}
-                   onChange={e => { setWachtwoord(e.target.value); setFout(null); }} required />
-          </label>
-          {fout && <p className="login__fout" role="alert">{fout}</p>}
-          <button className="knop knop--breed" type="submit">Inloggen</button>
-
-          <div className="login__demo">
-            <span>Demo-gebruikers (klik om in te vullen, wachtwoord: <code>{DEMO_WACHTWOORD}</code>)</span>
-            <div className="login__chips">
-              {GEBRUIKERS.map(g => (
-                <button key={g.email} type="button" className="chip" onClick={() => vulIn(g.email)}>
-                  {g.email}
-                </button>
-              ))}
-            </div>
-          </div>
-        </form>
+          <p>
+            Aanmelden gaat via de RWS-identiteitsprovider (Keycloak). Je context en
+            schrijfrechten volgen automatisch uit je toegewezen rol.
+          </p>
+          <button
+            className="knop knop--breed"
+            type="button"
+            disabled={bezig}
+            onClick={() => { void login(); }}
+          >
+            {bezig ? 'Even geduld…' : 'Inloggen met Keycloak'}
+          </button>
+        </div>
       </section>
     </div>
   );

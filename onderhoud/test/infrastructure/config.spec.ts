@@ -1,4 +1,4 @@
-import { laadConfig } from '../../src/infrastructure/config/config';
+import { laadAuthConfig, laadConfig } from '../../src/infrastructure/config/config';
 
 describe('laadConfig', () => {
   const basis = {
@@ -15,5 +15,23 @@ describe('laadConfig', () => {
 
   it('gooit als een verplichte variabele ontbreekt', () => {
     expect(() => laadConfig({ ...basis, DATABASE_URL: undefined })).toThrow(/DATABASE_URL/);
+  });
+});
+
+describe('laadAuthConfig', () => {
+  it('staat standaard uit en gebruikt de Keycloak-defaults en eigen context-rol', () => {
+    const auth = laadAuthConfig({});
+    expect(auth.ingeschakeld).toBe(false);
+    expect(auth.issuer).toBe('https://keycloak.joranit.com/realms/rws');
+    expect(auth.jwksUri).toBe('https://keycloak.joranit.com/realms/rws/protocol/openid-connect/certs');
+    expect(auth.vereisteRol).toBe('onderhoud');
+  });
+
+  it('schakelt auth alleen in bij AUTH_ENABLED="true" en respecteert overrides', () => {
+    const auth = laadAuthConfig({ AUTH_ENABLED: 'true', OIDC_REQUIRED_ROLE: 'onderhoud', OIDC_ISSUER: 'https://voorbeeld/realm' });
+    expect(auth.ingeschakeld).toBe(true);
+    expect(auth.issuer).toBe('https://voorbeeld/realm');
+    expect(auth.vereisteRol).toBe('onderhoud');
+    expect(laadAuthConfig({ AUTH_ENABLED: '1' }).ingeschakeld).toBe(false);
   });
 });
