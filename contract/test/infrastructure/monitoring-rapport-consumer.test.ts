@@ -24,6 +24,11 @@ describe('vertaalNaarKpiScore (anti-corruption)', () => {
     expect(vertaalNaarKpiScore({ iets: 'x' })).toBeNull();
     expect(vertaalNaarKpiScore(null)).toBeNull();
   });
+  it('leidt een score af uit de incidenttellingen van Monitoring (conformist)', () => {
+    expect(vertaalNaarKpiScore({ perSensor: [], totaalIncidenten: 0, openIncidenten: 0, opgelosteIncidenten: 0 })).toBe(100);
+    expect(vertaalNaarKpiScore({ totaalIncidenten: 4, openIncidenten: 1 })).toBe(75);
+    expect(vertaalNaarKpiScore({ totaalIncidenten: 1, openIncidenten: 1 })).toBe(0);
+  });
 });
 
 describe('MonitoringRapportVerwerker', () => {

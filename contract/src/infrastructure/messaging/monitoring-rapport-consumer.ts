@@ -25,8 +25,18 @@ export function vertaalNaarKpiScore(resultaten: unknown): number | null {
   if (resultaten === null || typeof resultaten !== 'object') return null;
   const r = resultaten as Record<string, unknown>;
   const kandidaat = [r.kpiScore, r.score, r.beschikbaarheid].find((w) => typeof w === 'number');
-  if (typeof kandidaat !== 'number' || Number.isNaN(kandidaat)) return null;
-  return Math.max(0, Math.min(100, Math.round(kandidaat)));
+  if (typeof kandidaat === 'number' && !Number.isNaN(kandidaat)) {
+    return Math.max(0, Math.min(100, Math.round(kandidaat)));
+  }
+  // Monitoring's rapportvorm kent geen los scoregetal; leid er één af uit de
+  // incidenttellingen: aandeel niet-open incidenten, 100 zonder incidenten.
+  const totaal = r.totaalIncidenten;
+  const open = r.openIncidenten;
+  if (typeof totaal === 'number' && typeof open === 'number' && totaal >= 0 && open >= 0) {
+    if (totaal === 0) return 100;
+    return Math.max(0, Math.min(100, Math.round(100 * (1 - open / totaal))));
+  }
+  return null;
 }
 
 /**
