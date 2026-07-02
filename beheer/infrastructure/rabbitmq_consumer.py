@@ -4,15 +4,53 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import pika
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 from application.dto import VerwerkRapportCommand
 from application.use_cases import VerwerkMonitoringRapport, VerwerkOnderhoudAfgerond
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidEventEnvelope(ValueError):
+    pass
+
+
+class EventEnvelope(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    eventId: UUID
+    eventType: StrictStr
+    occurredAt: datetime
+    producer: StrictStr
+    version: StrictInt
+    data: dict[str, Any]
+
+    @field_validator("eventType", "producer")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("mag niet leeg zijn")
+        return value
+
+    @field_validator("occurredAt")
+    @classmethod
+    def _must_be_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() != timedelta(0):
+            raise ValueError("moet een UTC timestamp zijn")
+        return value
 
 
 class RabbitMqConsumerRunner:
@@ -34,15 +72,13 @@ class RabbitMqConsumerRunner:
             queue_name="beheer.monitoring_rapport_opgesteld",
             routing_key="monitoring.rapport.opgesteld",
             handler_factory=self.monitoring_factory,
-            external_id_fields=("rapportId", "incidentId"),
-            values_fields=("resultaten",),
+            command_factory=monitoring_rapport_command_from_envelope,
         )
         self._start_consumer(
             queue_name="beheer.onderhoud_afgerond",
             routing_key="onderhoud.onderhoud.afgerond",
             handler_factory=self.onderhoud_factory,
-            external_id_fields=("rapportId", "onderhoudId"),
-            values_fields=("rapportwaarden", "resultaat"),
+            command_factory=onderhoud_afgerond_command_from_envelope,
         )
 
     def _start_consumer(
@@ -50,12 +86,11 @@ class RabbitMqConsumerRunner:
         queue_name: str,
         routing_key: str,
         handler_factory: Callable[[], object],
-        external_id_fields: tuple[str, ...],
-        values_fields: tuple[str, ...],
+        command_factory: Callable[[object], VerwerkRapportCommand],
     ) -> None:
         thread = threading.Thread(
             target=self._consume,
-            args=(queue_name, routing_key, handler_factory, external_id_fields, values_fields),
+            args=(queue_name, routing_key, handler_factory, command_factory),
             daemon=True,
         )
         thread.start()
@@ -66,8 +101,7 @@ class RabbitMqConsumerRunner:
         queue_name: str,
         routing_key: str,
         handler_factory: Callable[[], object],
-        external_id_fields: tuple[str, ...],
-        values_fields: tuple[str, ...],
+        command_factory: Callable[[object], VerwerkRapportCommand],
     ) -> None:
         try:
             parameters = pika.URLParameters(self.rabbitmq_url)
@@ -86,11 +120,7 @@ class RabbitMqConsumerRunner:
             ) -> None:
                 try:
                     envelope = json.loads(body.decode("utf-8"))
-                    command = _command_from_envelope(
-                        envelope=envelope,
-                        external_id_fields=external_id_fields,
-                        values_fields=values_fields,
-                    )
+                    command = command_factory(envelope)
                     handler = handler_factory()
                     handler(command)
                     ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -104,59 +134,136 @@ class RabbitMqConsumerRunner:
             logger.exception("RabbitMQ consumer voor %s kon niet starten", routing_key)
 
 
+def monitoring_rapport_command_from_envelope(envelope: object) -> VerwerkRapportCommand:
+    return _command_from_envelope(
+        envelope=envelope,
+        expected_event_type="monitoring.rapport.opgesteld",
+        expected_producer="monitoring",
+        required_data_fields=("incidentId", "kunstwerkId", "resultaten"),
+        external_id_fields=("rapportId", "incidentId"),
+        values_fields=("resultaten",),
+    )
+
+
+def onderhoud_afgerond_command_from_envelope(envelope: object) -> VerwerkRapportCommand:
+    return _command_from_envelope(
+        envelope=envelope,
+        expected_event_type="onderhoud.onderhoud.afgerond",
+        expected_producer="onderhoud",
+        required_data_fields=("onderhoudId", "kunstwerkId", "resultaat", "datum"),
+        external_id_fields=("rapportId", "onderhoudId"),
+        values_fields=("rapportwaarden", "resultaat"),
+    )
+
+
 def _command_from_envelope(
-    envelope: dict[str, Any],
+    envelope: object,
+    expected_event_type: str,
+    expected_producer: str,
+    required_data_fields: tuple[str, ...],
     external_id_fields: tuple[str, ...],
     values_fields: tuple[str, ...],
 ) -> VerwerkRapportCommand:
-    data = envelope.get("data") or {}
-    external_id = _first_present(data, external_id_fields) or envelope["eventId"]
+    validated = _validated_envelope(
+        envelope=envelope,
+        expected_event_type=expected_event_type,
+        expected_producer=expected_producer,
+        required_data_fields=required_data_fields,
+    )
+    data = validated.data
+    external_id = _first_present(data, external_id_fields) or validated.eventId
     values_source = _first_present(data, values_fields)
     return VerwerkRapportCommand(
-        bron_event_id=envelope["eventId"],
+        bron_event_id=str(validated.eventId),
         extern_rapport_id=str(external_id),
         kunstwerk_id=str(data["kunstwerkId"]),
         rapportwaarden=_extract_numeric_values(values_source),
-        event_type=envelope["eventType"],
-        occurred_at=_parse_datetime(envelope["occurredAt"]),
+        event_type=validated.eventType,
+        occurred_at=_ensure_utc(validated.occurredAt),
     )
+
+
+def _validated_envelope(
+    envelope: object,
+    expected_event_type: str,
+    expected_producer: str,
+    required_data_fields: tuple[str, ...],
+) -> EventEnvelope:
+    try:
+        validated = EventEnvelope.model_validate(envelope)
+    except ValidationError as exc:
+        raise InvalidEventEnvelope(f"Ongeldige event-envelope: {exc}") from exc
+
+    if validated.eventType != expected_event_type:
+        raise InvalidEventEnvelope(
+            f"eventType moet '{expected_event_type}' zijn, kreeg '{validated.eventType}'"
+        )
+    if validated.producer != expected_producer:
+        raise InvalidEventEnvelope(
+            f"producer moet '{expected_producer}' zijn, kreeg '{validated.producer}'"
+        )
+    if validated.version != 1:
+        raise InvalidEventEnvelope(f"version moet 1 zijn, kreeg {validated.version}")
+
+    for field_name in required_data_fields:
+        if field_name not in validated.data:
+            raise InvalidEventEnvelope(f"data.{field_name} ontbreekt")
+        value = validated.data[field_name]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise InvalidEventEnvelope(f"data.{field_name} is verplicht")
+    return validated
 
 
 def _first_present(data: dict[str, Any], names: tuple[str, ...]) -> Any:
     for name in names:
-        if name in data:
-            return data[name]
+        value = data.get(name)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
     return None
 
 
-def _parse_datetime(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed
+def _ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _extract_numeric_values(source: Any) -> dict[str, float]:
     values: dict[str, float] = {}
     if isinstance(source, dict):
         for key, value in source.items():
-            if isinstance(value, (int, float)):
-                values[str(key)] = float(value)
+            numeric = _numeric_value(value)
+            if numeric is not None:
+                values[str(key)] = numeric
             elif isinstance(value, dict):
                 name = value.get("meetwaarde") or value.get("code") or key
-                numeric = value.get("waarde")
-                if numeric is None:
-                    numeric = value.get("value")
-                if isinstance(numeric, (int, float)):
-                    values[str(name)] = float(numeric)
+                numeric = _numeric_from_mapping(value)
+                if name and numeric is not None:
+                    values[str(name)] = numeric
     elif isinstance(source, list):
         for item in source:
             if not isinstance(item, dict):
-            continue
-        name = item.get("meetwaarde") or item.get("code") or item.get("naam")
-        numeric = item.get("waarde")
-        if numeric is None:
-            numeric = item.get("value")
-        if name and isinstance(numeric, (int, float)):
-            values[str(name)] = float(numeric)
+                continue
+            name = item.get("meetwaarde") or item.get("code") or item.get("naam")
+            numeric = _numeric_from_mapping(item)
+            if name and numeric is not None:
+                values[str(name)] = numeric
     return values
+
+
+def _numeric_from_mapping(value: dict[str, Any]) -> float | None:
+    numeric = value.get("waarde")
+    if numeric is None:
+        numeric = value.get("value")
+    return _numeric_value(numeric)
+
+
+def _numeric_value(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
