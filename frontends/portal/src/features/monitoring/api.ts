@@ -1,5 +1,5 @@
 // REST-koppeling met de Monitoring-service (.NET, poort 8002) via het relatieve
-// proxypad /monitoring. Types spiegelen de response-DTO's van de service.
+// proxypad /svc/monitoring. Types spiegelen de response-DTO's van de service.
 import { api } from '../../lib/api';
 
 export interface SessieDto {

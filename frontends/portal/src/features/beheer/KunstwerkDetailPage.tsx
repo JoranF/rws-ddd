@@ -70,6 +70,9 @@ export function KunstwerkDetailPage() {
           kolommen={[
             { kop: 'Soort', cel: r => r.pakket.soort },
             { kop: 'Versie', cel: r => `v${r.pakket.versie}`, mono: true },
+            // Elke nieuwe vaststelling vervangt het hele pakket van die soort;
+            // zonder statuskolom lijken vervangen eisen nog te gelden.
+            { kop: 'Status', cel: r => <StatusPil waarde={r.pakket.status} /> },
             { kop: 'Code', cel: r => r.eis.code, mono: true },
             { kop: 'Omschrijving', cel: r => r.eis.omschrijving },
             { kop: 'Norm', cel: r => `${r.eis.meetwaarde} ${r.eis.operator} ${r.eis.grenswaarde} ${r.eis.eenheid}`, mono: true },
@@ -79,12 +82,13 @@ export function KunstwerkDetailPage() {
       </Sectie>
 
       <ActieForm
+        key={`eis-${id}`}
         context="beheer"
         titel="Eis vaststellen"
         knop="Stel eis vast"
         bezig={stelEisVast.isPending}
         velden={[
-          { naam: 'soort', label: 'Soort pakket', opties: ['Onderhoudseisen', 'Ontwerpeisen'], standaard: 'Onderhoudseisen' },
+          { naam: 'soort', label: 'Soort pakket', opties: ['Onderhoudseisen', 'Ontwerpeisen'], standaard: 'Onderhoudseisen', hint: 'Vervangt het huidige pakket van deze soort (nieuwe versie)' },
           { naam: 'code', label: 'Code', standaard: '', hint: 'bv. TRIL of SPOOR' },
           { naam: 'omschrijving', label: 'Omschrijving' },
           { naam: 'meetwaarde', label: 'Meetwaarde', hint: 'bv. trilling' },
@@ -113,6 +117,7 @@ export function KunstwerkDetailPage() {
 
       {k?.status !== 'BuitenGebruik' && (
         <ActieForm
+          key={`buitengebruik-${id}`}
           context="beheer"
           titel="Buiten gebruik stellen"
           knop="Stel buiten gebruik"

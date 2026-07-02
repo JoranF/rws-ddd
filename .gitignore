@@ -22,3 +22,6 @@ pgdata/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Playwright MCP-artefacten (browser-verificatie)
+.playwright-mcp/

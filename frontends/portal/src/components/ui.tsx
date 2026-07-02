@@ -66,7 +66,9 @@ export function Tabel<T>({ rijen, kolommen, sleutel, laden, fout, leeg, onRij }:
   leeg: string;
   onRij?: (rij: T) => void;
 }) {
-  if (fout) return <FoutBlok fout={fout} />;
+  // Bij een mislukte background-refetch houden we de gecachte rijen op het
+  // scherm; alleen zonder data is de fout het hele verhaal.
+  if (fout && !rijen) return <FoutBlok fout={fout} />;
   if (laden && !rijen) return <p className="stil">Laden…</p>;
   if (!rijen || rijen.length === 0) return <p className="stil">{leeg}</p>;
   return (
@@ -95,21 +97,23 @@ export function Tabel<T>({ rijen, kolommen, sleutel, laden, fout, leeg, onRij }:
 }
 
 // ---------------------------------------------------------------- statuspillen
+// Sleutels lowercase: de vier services serialiseren met verschillende casing.
 const STATUS_TOON: Record<string, 'ok' | 'let-op' | 'fout' | 'neutraal'> = {
   // gedeeld
-  Open: 'let-op', Gestart: 'let-op', Actief: 'ok', Afgerond: 'ok', Opgelost: 'ok',
+  open: 'let-op', nieuw: 'let-op', gestart: 'let-op', actief: 'ok', afgerond: 'ok', opgelost: 'ok',
   // beheer
-  Geregistreerd: 'neutraal', InGebruik: 'ok', BuitenGebruik: 'fout', Afgekeurd: 'fout',
-  Voldoet: 'ok', VoldoetNiet: 'fout', NietTeBeoordelen: 'let-op',
+  geregistreerd: 'neutraal', ingebruik: 'ok', buitengebruik: 'fout', afgekeurd: 'fout',
+  voldoet: 'ok', voldoetniet: 'fout', niettebeoordelen: 'let-op',
+  vastgesteld: 'ok', vervangen: 'neutraal',
   // onderhoud
-  Gemeld: 'let-op', Gepland: 'neutraal', Goedgekeurd: 'ok',
+  gemeld: 'let-op', gepland: 'neutraal', goedgekeurd: 'ok',
   // monitoring / contract
-  InBehandeling: 'let-op', Gepubliceerd: 'neutraal', Gegund: 'ok', Gesloten: 'neutraal',
+  inbehandeling: 'let-op', gepauzeerd: 'neutraal', gepubliceerd: 'neutraal', gegund: 'ok', gesloten: 'neutraal',
 };
 
 export function StatusPil({ waarde }: { waarde: string | null | undefined }) {
   if (!waarde) return <span className="stil">—</span>;
-  const toon = STATUS_TOON[waarde] ?? 'neutraal';
+  const toon = STATUS_TOON[waarde.trim().toLowerCase()] ?? 'neutraal';
   return <span className={`pil pil--${toon}`}>{waarde}</span>;
 }
 

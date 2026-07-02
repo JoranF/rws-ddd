@@ -1,5 +1,5 @@
 // REST-koppeling met de Beheer-service (FastAPI, poort 8004) via het relatieve
-// proxypad /beheer. Types spiegelen de response-DTO's van de service.
+// proxypad /svc/beheer. Types spiegelen de response-DTO's van de service.
 import { api } from '../../lib/api';
 
 export interface Kunstwerk {
@@ -61,16 +61,19 @@ export interface Beoordeling {
 export const KUNSTWERK_TYPES = ['Brug', 'Sluis', 'Tunnel', 'Snelweg', 'Dijk', 'Gemaal', 'Stormvloedkering'];
 export const EIS_OPERATORS = ['<', '<=', '>', '>=', '='];
 
+// Kunstwerk-ID's zijn vrije invoer — altijd encoderen voordat ze in pad of query gaan.
+const enc = encodeURIComponent;
+
 export const beheerApi = {
   kunstwerken: () => api.get<Kunstwerk[]>('/svc/beheer/api/kunstwerken'),
-  kunstwerk: (id: string) => api.get<Kunstwerk>(`/svc/beheer/api/kunstwerken/${id}`),
+  kunstwerk: (id: string) => api.get<Kunstwerk>(`/svc/beheer/api/kunstwerken/${enc(id)}`),
   registreer: (body: { kunstwerkId?: string; naam: string; type: string; locatie: string; beheerder?: string }) =>
     api.post<Kunstwerk>('/svc/beheer/api/kunstwerken', body),
   buitenGebruik: (id: string, body: { reden: string; datum: string }) =>
-    api.post<Kunstwerk>(`/svc/beheer/api/kunstwerken/${id}/buitengebruikstelling`, body),
-  eisen: (id: string) => api.get<Eisenpakket[]>(`/svc/beheer/api/kunstwerken/${id}/eisen`),
+    api.post<Kunstwerk>(`/svc/beheer/api/kunstwerken/${enc(id)}/buitengebruikstelling`, body),
+  eisen: (id: string) => api.get<Eisenpakket[]>(`/svc/beheer/api/kunstwerken/${enc(id)}/eisen`),
   stelEisenVast: (id: string, soort: 'onderhoudseisen' | 'ontwerpeisen', eisen: Eis[]) =>
-    api.post<Eisenpakket>(`/svc/beheer/api/kunstwerken/${id}/${soort}`, { eisen }),
+    api.post<Eisenpakket>(`/svc/beheer/api/kunstwerken/${enc(id)}/${soort}`, { eisen }),
   beoordelingen: (kunstwerkId?: string) =>
-    api.get<Beoordeling[]>(`/svc/beheer/api/rapportage-beoordelingen${kunstwerkId ? `?kunstwerkId=${kunstwerkId}` : ''}`),
+    api.get<Beoordeling[]>(`/svc/beheer/api/rapportage-beoordelingen${kunstwerkId ? `?kunstwerkId=${enc(kunstwerkId)}` : ''}`),
 };

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { monitoringApi } from './api';
 import { ActieForm, AlleenLezen, PageHeader, Sectie, Tabel } from '../../components/ui';
-import { dateOnly, fmt, fmtDatum } from '../../lib/dates';
+import { dateOnly, fmt, fmtDatum, toIso } from '../../lib/dates';
 import { useToast } from '../../lib/toast';
 
 export function RapportenPage() {
@@ -56,8 +56,8 @@ export function RapportenPage() {
         ]}
         onSubmit={v => stelOp.mutate({
           kunstwerkId: v.kunstwerkId,
-          periodeStart: new Date(v.periodeStart).toISOString(),
-          periodeEind: new Date(v.periodeEind).toISOString(),
+          periodeStart: toIso(v.periodeStart),
+          periodeEind: toIso(v.periodeEind),
         })}
       />
 
@@ -72,8 +72,8 @@ export function RapportenPage() {
             hint: 'De netwerkrapportage over alle kunstwerken wordt naar Beheer gestuurd.' },
         ]}
         onSubmit={v => netwerk.mutate({
-          periodeStart: new Date(v.periodeStart).toISOString(),
-          periodeEind: new Date(v.periodeEind).toISOString(),
+          periodeStart: toIso(v.periodeStart),
+          periodeEind: toIso(v.periodeEind),
         })}
       />
     </>

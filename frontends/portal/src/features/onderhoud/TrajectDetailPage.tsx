@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { onderhoudApi, OORDEEL_OPTIES } from './api';
 import { ActieForm, ActieKnop, AlleenLezen, DefLijst, FoutBlok, PageHeader, Sectie, StatusPil, Tabel } from '../../components/ui';
-import { dateOnly, fmt, fmtEuro, nowIso } from '../../lib/dates';
+import { dateOnly, fmt, fmtEuro, nowIso, toIso } from '../../lib/dates';
 import { useToast } from '../../lib/toast';
 
 export function TrajectDetailPage() {
@@ -22,7 +22,7 @@ export function TrajectDetailPage() {
 
   const inspectie = useMutation({
     mutationFn: (v: Record<string, string>) => onderhoudApi.registreerInspectie(id, {
-      datum: new Date(v.datum).toISOString(),
+      datum: toIso(v.datum),
       oordeel: v.oordeel,
       ...(v.opmerkingen ? { opmerkingen: v.opmerkingen } : {}),
     }),
@@ -33,7 +33,7 @@ export function TrajectDetailPage() {
   const rondAf = useMutation({
     mutationFn: (v: Record<string, string>) => onderhoudApi.rondAf(id, {
       resultaat: v.resultaat,
-      datum: new Date(v.datum).toISOString(),
+      datum: toIso(v.datum),
     }),
     onSuccess: () => { toast.push('success', `Traject ${id} afgerond`); klaar(); },
     onError: e => toast.push('error', 'Traject afronden mislukt', (e as Error).message),
@@ -42,7 +42,7 @@ export function TrajectDetailPage() {
   const factuur = useMutation({
     mutationFn: (v: Record<string, string>) => onderhoudApi.registreerFactuur(id, {
       bedragEuro: Number(v.bedragEuro),
-      ontvangenOp: new Date(v.ontvangenOp).toISOString(),
+      ontvangenOp: toIso(v.ontvangenOp),
     }),
     onSuccess: f => { toast.push('success', `Factuur ${f.factuurId} geregistreerd`); klaar(); },
     onError: e => toast.push('error', 'Factuur registreren mislukt', (e as Error).message),
@@ -124,6 +124,7 @@ export function TrajectDetailPage() {
         <>
           <ActieForm
             context="onderhoud"
+            key={`inspectie-${id}`}
             titel="Inspectie registreren"
             knop="Registreer inspectie"
             bezig={inspectie.isPending}
@@ -136,6 +137,7 @@ export function TrajectDetailPage() {
           />
           <ActieForm
             context="onderhoud"
+            key={`afronden-${id}`}
             titel="Traject afronden"
             knop="Rond traject af"
             bezig={rondAf.isPending}
@@ -151,6 +153,7 @@ export function TrajectDetailPage() {
       {t && (
         <ActieForm
           context="onderhoud"
+          key={`factuur-${id}`}
           titel="Factuur registreren"
           knop="Registreer factuur"
           bezig={factuur.isPending}

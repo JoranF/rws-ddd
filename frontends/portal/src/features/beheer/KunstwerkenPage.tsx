@@ -52,7 +52,7 @@ export function KunstwerkenPage() {
           fout={kunstwerken.error as Error | null}
           leeg="Nog geen kunstwerken in het register."
           sleutel={k => k.kunstwerkId}
-          onRij={k => navigate(`/beheer/kunstwerken/${k.kunstwerkId}`)}
+          onRij={k => navigate(`/beheer/kunstwerken/${encodeURIComponent(k.kunstwerkId)}`)}
           kolommen={[
             { kop: 'ID', cel: k => k.kunstwerkId, mono: true },
             { kop: 'Naam', cel: k => <strong>{k.naam}</strong> },

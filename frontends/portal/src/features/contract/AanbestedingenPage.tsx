@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { contractApi } from './api';
 import { ActieForm, AlleenLezen, PageHeader, Sectie, StatusPil, Tabel } from '../../components/ui';
-import { dateOnly } from '../../lib/dates';
+import { dateOnly, toIso } from '../../lib/dates';
 import { useToast } from '../../lib/toast';
 
 export function AanbestedingenPage() {
@@ -38,7 +38,7 @@ export function AanbestedingenPage() {
         ]}
         onSubmit={v => start.mutate({
           kunstwerkId: v.kunstwerkId,
-          sluitingsdatum: new Date(v.sluitingsdatum).toISOString(),
+          sluitingsdatum: toIso(v.sluitingsdatum),
           prijsgewicht: Number(v.prijsgewicht),
           kwaliteitsgewicht: Number(v.kwaliteitsgewicht),
         })}

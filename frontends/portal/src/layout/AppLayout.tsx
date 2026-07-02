@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { CONTEXTS, CONTEXT_VOLGORDE, type ContextKey } from '../lib/contexts';
 import { useAuth } from '../auth/auth';
 import { Matrixbord } from './Matrixbord';
@@ -32,7 +32,6 @@ const NAV: Record<ContextKey, Array<{ naar: string; label: string; einde?: boole
 
 export function AppLayout() {
   const { gebruiker, logout } = useAuth();
-  const navigate = useNavigate();
   if (!gebruiker) return null; // RequireAuth vangt dit al af
 
   // Eigen context eerst, daarna de rest in vaste volgorde.
@@ -79,8 +78,8 @@ export function AppLayout() {
             <strong>{gebruiker.naam}</strong>
             <small>{gebruiker.rol} · {gebruiker.organisatie}</small>
           </div>
-          <button className="knop knop--stil" type="button"
-                  onClick={() => { logout(); navigate('/login'); }}>
+          {/* RequireAuth rendert zelf de redirect naar /login zodra de gebruiker weg is. */}
+          <button className="knop knop--stil" type="button" onClick={logout}>
             Uitloggen
           </button>
         </div>

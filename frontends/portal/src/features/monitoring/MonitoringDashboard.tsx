@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { monitoringApi } from './api';
 import { AlleenLezen, ErnstPil, Kpi, KpiRij, PageHeader, Sectie, StatusPil, Tabel } from '../../components/ui';
-import { fmt } from '../../lib/dates';
+import { fmt, statusIs } from '../../lib/dates';
 
 export function MonitoringDashboard() {
   const incidenten = useQuery({ queryKey: ['monitoring', 'incidenten'], queryFn: () => monitoringApi.incidenten() });
@@ -9,12 +9,10 @@ export function MonitoringDashboard() {
   const rapporten = useQuery({ queryKey: ['monitoring', 'rapporten'], queryFn: () => monitoringApi.rapporten() });
 
   const inc = incidenten.data ?? [];
-  const openIncidenten = inc.filter(i => i.status !== 'Opgelost').length;
+  const openIncidenten = inc.filter(i => !statusIs(i.status, 'Opgelost')).length;
 
   const ss = sessies.data ?? [];
-  const actieveSessies = ss.some(s => s.status === 'Actief')
-    ? ss.filter(s => s.status === 'Actief').length
-    : ss.filter(s => !s.beeindigdOp).length;
+  const actieveSessies = ss.filter(s => statusIs(s.status, 'Actief')).length;
 
   return (
     <>

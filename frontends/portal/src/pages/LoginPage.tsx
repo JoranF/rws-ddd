@@ -16,8 +16,8 @@ export function LoginPage() {
     e.preventDefault();
     const resultaat = login(email, wachtwoord);
     if (resultaat) { setFout(resultaat); return; }
-    const ingelogd = GEBRUIKERS.find(g => g.email === email.trim().toLowerCase());
-    navigate(`/${ingelogd?.context ?? 'beheer'}`, { replace: true });
+    // De index-route stuurt door naar het dashboard van de eigen context.
+    navigate('/', { replace: true });
   };
 
   const vulIn = (mail: string) => {

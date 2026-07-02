@@ -1,8 +1,10 @@
 // Alle timestamps die we versturen: ISO-8601 in UTC (eindigend op "Z").
 export const nowIso = (): string => new Date().toISOString();
 
-export const isoOffsetDays = (days: number): string =>
-  new Date(Date.now() + days * 86_400_000).toISOString();
+// Voor endpoints die een volledige timestamp willen terwijl het formulier een
+// kale datum (yyyy-MM-dd) levert. Let op: sommige endpoints willen juist de
+// kale datum — check het API-contract per endpoint.
+export const toIso = (datum: string): string => new Date(datum).toISOString();
 
 // Kale kalenderdatum (yyyy-MM-dd) voor endpoints die geen tijd willen.
 export const dateOnly = (offsetDays = 0): string =>
@@ -24,3 +26,8 @@ export const fmtDatum = (iso: string | null | undefined): string => {
 
 export const fmtEuro = (n: number | null | undefined): string =>
   n == null ? '—' : n.toLocaleString('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+
+// Statusstrings vergelijken zoals de services ze bedoelen, niet zoals ze ze
+// toevallig serialiseren: casing kan per stack verschillen.
+export const statusIs = (waarde: string | null | undefined, ...opties: string[]): boolean =>
+  !!waarde && opties.some(o => o.toLowerCase() === waarde.trim().toLowerCase());

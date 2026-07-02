@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
 export type ToastKind = 'error' | 'success' | 'info';
 export interface Toast {
@@ -26,8 +26,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 8000);
   }, []);
 
+  const api = useMemo(() => ({ push }), [push]);
+
   return (
-    <Ctx.Provider value={{ push }}>
+    <Ctx.Provider value={api}>
       {children}
       <div className="toast-stack" role="status">
         {toasts.map(t => (

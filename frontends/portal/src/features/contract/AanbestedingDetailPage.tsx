@@ -60,6 +60,7 @@ export function AanbestedingDetailPage() {
       ]} />
 
       {loopt && <ActieForm
+        key={`inschrijving-${id}`}
         context="contract"
         titel="Inschrijving indienen"
         knop="Dien inschrijving in"
@@ -73,6 +74,7 @@ export function AanbestedingDetailPage() {
       />}
 
       {loopt && <ActieForm
+        key={`gunning-${id}`}
         context="contract"
         titel="Gunnen (EMVI)"
         knop="Gun aanbesteding"

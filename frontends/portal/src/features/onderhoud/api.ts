@@ -1,6 +1,9 @@
 // REST-koppeling met de Onderhoud-service (NestJS, poort 8003) via het relatieve
-// proxypad /onderhoud. Types spiegelen de response-DTO's van de service.
+// proxypad /svc/onderhoud. Types spiegelen de response-DTO's van de service.
 import { api } from '../../lib/api';
+
+// ID's komen o.a. uit route-params (gedecodeerd) — altijd encoderen in het pad.
+const enc = encodeURIComponent;
 
 export interface Inspectie {
   inspectieId: string;
@@ -43,17 +46,17 @@ export const OORDEEL_OPTIES = ['Goedgekeurd', 'Afgekeurd'];
 
 export const onderhoudApi = {
   trajecten: () => api.get<Onderhoud[]>('/svc/onderhoud/api/onderhoud'),
-  traject: (id: string) => api.get<Onderhoud>(`/svc/onderhoud/api/onderhoud/${id}`),
+  traject: (id: string) => api.get<Onderhoud>(`/svc/onderhoud/api/onderhoud/${enc(id)}`),
   start: (id: string, body: { datum: string }) =>
-    api.post<{ status: string }>(`/svc/onderhoud/api/onderhoud/${id}/start`, body),
+    api.post<{ status: string }>(`/svc/onderhoud/api/onderhoud/${enc(id)}/start`, body),
   registreerInspectie: (id: string, body: { datum: string; oordeel: string; opmerkingen?: string }) =>
-    api.post<unknown>(`/svc/onderhoud/api/onderhoud/${id}/inspecties`, body),
+    api.post<unknown>(`/svc/onderhoud/api/onderhoud/${enc(id)}/inspecties`, body),
   rondAf: (id: string, body: { resultaat: string; datum: string }) =>
-    api.post<{ status: string }>(`/svc/onderhoud/api/onderhoud/${id}/afronden`, body),
+    api.post<{ status: string }>(`/svc/onderhoud/api/onderhoud/${enc(id)}/afronden`, body),
   registreerFactuur: (id: string, body: { bedragEuro: number; ontvangenOp: string }) =>
-    api.post<Factuur>(`/svc/onderhoud/api/onderhoud/${id}/facturen`, body),
+    api.post<Factuur>(`/svc/onderhoud/api/onderhoud/${enc(id)}/facturen`, body),
   keurFactuurGoed: (id: string, factuurId: string) =>
-    api.post<{ status: string }>(`/svc/onderhoud/api/onderhoud/${id}/facturen/${factuurId}/goedkeuring`),
+    api.post<{ status: string }>(`/svc/onderhoud/api/onderhoud/${enc(id)}/facturen/${enc(factuurId)}/goedkeuring`),
   storingen: () => api.get<Storing[]>('/svc/onderhoud/api/storingen'),
   meldStoring: (body: { kunstwerkId: string; omschrijving: string; ernst: string }) =>
     api.post<Storing>('/svc/onderhoud/api/storingen', body),

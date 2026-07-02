@@ -4,11 +4,13 @@ import { contractApi } from './api';
 import { ActieForm, ActieKnop, AlleenLezen, DefLijst, FoutBlok, PageHeader, Sectie, StatusPil } from '../../components/ui';
 import { dateOnly, fmtEuro, nowIso } from '../../lib/dates';
 import { useToast } from '../../lib/toast';
+import { useKanBewerken } from '../../auth/auth';
 
 export function ContractDetailPage() {
   const { id = '' } = useParams();
   const qc = useQueryClient();
   const toast = useToast();
+  const kanBewerken = useKanBewerken('contract');
 
   const contract = useQuery({ queryKey: ['contract', 'contract', id], queryFn: () => contractApi.contract(id) });
 
@@ -56,6 +58,7 @@ export function ContractDetailPage() {
       ]} />
 
       <ActieForm
+        key={`prestatie-${id}`}
         context="contract"
         titel="Prestatieverklaring indienen"
         knop="Dien prestatieverklaring in"
@@ -69,7 +72,8 @@ export function ContractDetailPage() {
         onSubmit={v => dienVerklaringIn.mutate(v)}
       />
 
-      {c?.status.toLowerCase() !== 'afgerond' && (
+      {/* Ook de sectiekop verbergen voor lezers — anders staat er een lege kop. */}
+      {kanBewerken && c?.status.toLowerCase() !== 'afgerond' && (
         <Sectie titel="Afronding">
           <ActieKnop context="contract" variant="gevaar" bezig={rondAf.isPending} onClick={() => rondAf.mutate()}>
             Contract afronden

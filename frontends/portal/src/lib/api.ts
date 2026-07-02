@@ -4,7 +4,9 @@
 // (/beheer, /monitoring, ...) — anders kaapt de proxy een harde refresh op die routes.
 // Er is GEEN mockdata: faalt een request, dan gooien we — de UI toont een foutstatus.
 
-export type Service = 'beheer' | 'monitoring' | 'onderhoud' | 'contract';
+import type { ContextKey } from './contexts';
+
+export type Service = ContextKey;
 
 export class ApiError extends Error {
   constructor(public status: number, public body: unknown, message: string) {
@@ -35,10 +37,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   const data = await parse(res);
   if (!res.ok) {
-    const msg =
-      (data && typeof data === 'object' && ('message' in data || 'error' in data || 'fout' in data || 'detail' in data)
+    const msg = typeof data === 'string' && data
+      ? data
+      : data
         ? JSON.stringify(data)
-        : String(data)) || `${res.status} ${res.statusText}`;
+        : `${res.status} ${res.statusText}`;
     throw new ApiError(res.status, data, `${method} ${path} → ${res.status}: ${msg}`);
   }
   return data as T;

@@ -23,10 +23,12 @@ onaangeraakt; integratie loopt uitsluitend via hun bestaande REST-API's (gouden 
 ## Architectuur
 
 - **Stack:** React + Vite + TypeScript, `react-router-dom`, `@tanstack/react-query`.
-- **Proxy-patroon zoals Svens frontend:** alle API-paden relatief (`/beheer/...`,
-  `/monitoring/...`, `/onderhoud/...`, `/contract/...`). Lokaal lost de Vite-dev-proxy
-  dat op, in Docker/Dokploy een nginx-template met `CONTRACT_URL`/`MONITORING_URL`/
-  `ONDERHOUD_URL`/`BEHEER_URL`. Geen CORS-aanpassingen in de services nodig.
+- **Proxy-patroon zoals Svens frontend, met `/svc/`-prefix:** alle API-paden relatief
+  (`/svc/beheer/...`, `/svc/monitoring/...`, `/svc/onderhoud/...`, `/svc/contract/...`).
+  Lokaal lost de Vite-dev-proxy dat op, in Docker/Dokploy een nginx-template met
+  `CONTRACT_URL`/`MONITORING_URL`/`ONDERHOUD_URL`/`BEHEER_URL`. Geen CORS-aanpassingen
+  in de services nodig. De prefix is nodig omdat de SPA-routes zelf `/beheer` enz.
+  heten — zonder prefix kaapt de proxy een harde refresh of deep-link op die routes.
 - **Compose:** nieuw blok `frontend-portal` (poort 8006) naast `frontend-sven`.
 
 ## Login & rollen (frontend-only)
