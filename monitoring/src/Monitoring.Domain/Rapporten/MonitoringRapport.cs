@@ -54,4 +54,8 @@ public sealed class MonitoringRapport : AggregateRoot
         rapport.RegistreerEvent(new RapportOpgesteld(kunstwerkId.Waarde, zwaarste?.Id.Waarde, resultaten));
         return rapport;
     }
+
+    public static MonitoringRapport Herstel(RapportId id, KunstwerkReferentie kunstwerkId, DateTime periodeStart,
+        DateTime periodeEind, IncidentId? zwaarsteOpenIncident, RapportResultaten resultaten, DateTime opgesteldOp) =>
+        new(id, kunstwerkId, periodeStart, periodeEind, zwaarsteOpenIncident, resultaten, opgesteldOp);
 }
