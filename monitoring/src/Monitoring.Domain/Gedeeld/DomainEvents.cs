@@ -60,3 +60,14 @@ public sealed record RapportOpgesteld(string KunstwerkId, string? IncidentId, ob
         ["resultaten"] = Resultaten,
     };
 }
+
+public sealed record NetwerkrapportageOpgesteld(string PeriodeStart, string PeriodeEind, string OpgesteldOp, object Kunstwerken) : IDomainEvent
+{
+    public string EventType => "monitoring.netwerkrapportage.opgesteld";
+    public IReadOnlyDictionary<string, object?> Data => new Dictionary<string, object?>
+    {
+        ["periode"] = new Dictionary<string, object?> { ["start"] = PeriodeStart, ["eind"] = PeriodeEind },
+        ["opgesteldOp"] = OpgesteldOp,
+        ["kunstwerken"] = Kunstwerken,
+    };
+}
