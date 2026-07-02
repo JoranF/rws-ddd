@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 from uuid import uuid4
 
+import pytest
+
 from application.dto import (
     RegistreerKunstwerkCommand,
     StelEisenVastCommand,
@@ -31,6 +33,9 @@ from infrastructure.rabbitmq_consumer import (
     onderhoud_afgerond_command_from_envelope,
 )
 from tests.fakes import FakePublisher, FakeUnitOfWork, FixedClock, SequenceIdGenerator
+
+
+pytestmark = pytest.mark.unit
 
 
 def test_registreer_kunstwerk_slaat_op_en_publiceert_event() -> None:
