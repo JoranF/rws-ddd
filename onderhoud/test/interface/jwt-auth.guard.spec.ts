@@ -17,8 +17,8 @@ jest.mock('jose', () => ({
 import { JwtAuthGuard } from '../../src/interface/http/auth/jwt-auth.guard';
 import type { AuthConfig } from '../../src/infrastructure/config/config';
 
-function context(method: string, authHeader?: string): ExecutionContext {
-  const request = { method, headers: authHeader ? { authorization: authHeader } : {} };
+function context(method: string, authHeader?: string, path = '/api/onderhoud'): ExecutionContext {
+  const request = { method, path, headers: authHeader ? { authorization: authHeader } : {} };
   return {
     switchToHttp: () => ({ getRequest: () => request }),
   } as unknown as ExecutionContext;
@@ -45,6 +45,12 @@ describe('JwtAuthGuard', () => {
   it('geeft 401 bij een ontbrekend bearer-token', async () => {
     const guard = new JwtAuthGuard(BASIS_CONFIG);
     await expect(guard.canActivate(context('GET'))).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('laat niet-/api-paden (zoals /health) door zonder token — APP_GUARD is app-breed', async () => {
+    const guard = new JwtAuthGuard(BASIS_CONFIG);
+    await expect(guard.canActivate(context('GET', undefined, '/health'))).resolves.toBe(true);
+    await expect(guard.canActivate(context('GET', undefined, '/api-docs'))).resolves.toBe(true);
   });
 
   it('geeft 401 bij een ongeldig of verlopen token', async () => {
