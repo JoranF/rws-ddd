@@ -21,6 +21,9 @@ from domain.services import EisenValidator
 from tests.fakes import FixedClock
 
 
+pytestmark = pytest.mark.unit
+
+
 def test_kunstwerk_registreert_event_en_kan_buiten_gebruik() -> None:
     now = FixedClock().now()
     kunstwerk = Kunstwerk.registreer(

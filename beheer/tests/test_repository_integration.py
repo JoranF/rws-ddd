@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -12,6 +13,9 @@ from infrastructure.uow import SqlAlchemyUnitOfWork
 from tests.fakes import FakePublisher, FixedClock, SequenceIdGenerator
 
 import infrastructure.models  # noqa: F401
+
+
+pytestmark = pytest.mark.integration
 
 
 def _session_factory() -> sessionmaker:

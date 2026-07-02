@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -19,6 +20,9 @@ from tests.fakes import (
     InMemoryState,
     SequenceIdGenerator,
 )
+
+
+pytestmark = pytest.mark.integration
 
 
 def _test_client() -> tuple[TestClient, FakePublisher]:
