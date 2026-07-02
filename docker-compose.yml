@@ -55,15 +55,15 @@ services:
       postgres: { condition: service_healthy }
     networks: [rws-net]
 
-  # contract:
-  #   build: ./contract
-  #   container_name: rws-contract
-  #   env_file: ./contract/.env
-  #   ports: ["8001:8001"]
-  #   depends_on:
-  #     rabbitmq: { condition: service_healthy }
-  #     postgres: { condition: service_healthy }
-  #   networks: [rws-net]
+  contract:
+    build: ./contract
+    container_name: rws-contract
+    env_file: ./contract/.env
+    ports: ["8001:8001"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    networks: [rws-net]
 
   # monitoring:
   #   build: ./monitoring

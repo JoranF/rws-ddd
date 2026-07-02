@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model BekendKunstwerk {
+  kunstwerkId  String   @id
+  type         String?
+  locatie      String?
+  inGebruik    Boolean  @default(true)
+  bijgewerktOp DateTime @updatedAt
+}
+
+model VerwerktEvent {
+  eventId    String   @id
+  verwerktOp DateTime @default(now())
+}
+
+model Aanbesteding {
+  id                String         @id
+  kunstwerkId       String
+  sluitingsdatum    DateTime
+  prijsgewicht      Int
+  kwaliteitsgewicht Int
+  status            String
+  inschrijvingen    Inschrijving[]
+}
+
+model Inschrijving {
+  id              String       @id
+  aanbestedingId  String
+  aannemer        String
+  prijsCenten     Int
+  kwaliteitsscore Int
+  aanbesteding    Aanbesteding @relation(fields: [aanbestedingId], references: [id])
+}
+
+model Onderhoudscontract {
+  id             String                @id
+  kunstwerkId    String
+  opdrachtnemer  String
+  looptijdStart  DateTime
+  looptijdEind   DateTime
+  waardeCenten   Int
+  aanbestedingId String?
+  status         String
+  wijzigingen    Wijziging[]
+  prestaties     Prestatieverklaring[]
+}
+
+model Wijziging {
+  id            String             @id
+  contractId    String
+  mutatieCenten Int
+  soort         String
+  reden         String
+  datum         DateTime
+  contract      Onderhoudscontract @relation(fields: [contractId], references: [id])
+}
+
+model Prestatieverklaring {
+  id           String             @id
+  contractId   String
+  periodeStart DateTime
+  periodeEind  DateTime
+  score        Int
+  bedragCenten Int
+  contract     Onderhoudscontract @relation(fields: [contractId], references: [id])
+}
+
+// Fase 2 — read-model: ontwerpeisen per kunstwerk (van Beheer, conformist/customer).
+model Ontwerpeis {
+  kunstwerkId  String   @id
+  eisen        Json
+  bijgewerktOp DateTime @updatedAt
+}
+
+// Fase 2 — read-model: KPI-rapport per (kunstwerk, incident) (van Monitoring, conformist/ACL).
+model KpiRapport {
+  id          String   @id
+  kunstwerkId String
+  incidentId  String?
+  kpiScore    Int?
+  resultaten  Json
+  ontvangenOp DateTime @default(now())
+}
+
+// Fase 2 — transactionele outbox: use-cases schrijven het event hier weg; een relay
+// bezorgt het daarna op `rws.events` (ontkoppeld van broker-beschikbaarheid).
+model OutboxEvent {
+  id             String    @id // = eventId (uuid) uit de envelope
+  eventType      String
+  routingKey     String
+  payload        Json // volledige envelope zoals gepubliceerd
+  gepubliceerd   Boolean   @default(false)
+  aangemaaktOp   DateTime  @default(now())
+  gepubliceerdOp DateTime?
+
+  @@index([gepubliceerd, aangemaaktOp])
+}
