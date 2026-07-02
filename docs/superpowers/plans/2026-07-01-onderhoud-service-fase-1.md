@@ -1,49 +1,58 @@
-# Onderhoud-service Fase 1 — Implementation Plan
+# Onderhoud-service Fase 1 — Implementation Plan (NestJS + TypeORM)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bouw de Onderhoud bounded context (Fase 1) als zelfstandig draaiende service: drie aggregates (Storing, Onderhoud, OnderhoudsSchema), twee instappunten (MeldStoring + StelDiagnose), alle 4 gepubliceerde events, idempotente consumers voor Monitoring/Contract/Beheer, een Anti-Corruption Layer voor externe aannemersfacturen, REST + OpenAPI, en Docker.
 
-**Architecture:** Vier lagen met de afhankelijkheidsregel naar binnen (`interface → application → domain`, `infrastructure → domain/application`). `domain` is puur TypeScript; Prisma/Fastify/amqplib leven alleen in `infrastructure`/`interface`. Bouwvolgorde: walking skeleton (server/DB/broker/health) → domein met TDD → applicatie-use-cases met in-memory fakes → infrastructure-implementaties (repos, publisher, consumers, ACL) → interface + composition root → Docker. Zelfde stack en patronen als de Contract-service, zodat de repo consistent blijft.
+**Architecture:** Vier lagen met de afhankelijkheidsregel naar binnen (`interface → application → domain`, `infrastructure → domain/application`). `domain` is **puur TypeScript zonder NestJS-, TypeORM- of andere framework-imports** — dat is de kern van de laagscheiding en het maakt het domein snel en los te testen. NestJS levert de dependency-injection, HTTP en modules; TypeORM de persistentie; amqplib de RabbitMQ-integratie. Bouwvolgorde: walking skeleton (Nest-app/DB/broker/health) → domein met TDD → applicatie-use-cases (als injectables) met in-memory fakes → infrastructure (TypeORM-repos, publisher, consumers, ACL) → interface (controllers + DTO's) + modules → Docker.
 
-**Tech Stack:** Node.js 22, TypeScript (ESM), Fastify 5, Prisma 6 (+ PostgreSQL `onderhoud_db`), amqplib (RabbitMQ topic-exchange `rws.events`), Vitest 2, uuid.
+**Tech Stack:** Node.js 22, TypeScript (CommonJS/`nest build`), **NestJS 11** (Express-platform), **TypeORM 0.3** (+ PostgreSQL `onderhoud_db`, migraties), **amqplib** (RabbitMQ topic-exchange `rws.events`), `@nestjs/config`, `@nestjs/terminus` (health), `@nestjs/swagger` (OpenAPI), `class-validator`/`class-transformer` (DTO-validatie), **Jest** + `supertest` (tests), uuid.
+
+> **Waarom deze stack.** Het team spreekt bewust verschillende stacks af per service om te bewijzen dat de contexts alleen via REST/events koppelen (zie `docs/vervolgstappen.md`). Onderhoud draait op **NestJS + TypeORM** (Contract op Fastify + Prisma, Beheer op Python/FastAPI, Monitoring op .NET). Poort, DB-naam, event-envelope en `/health` zijn identiek ongeacht stack.
+
+> **Waarom Jest i.p.v. Vitest.** NestJS leunt op `emitDecoratorMetadata` voor dependency-injection. Vitest (esbuild) emit die metadata niet zonder extra SWC-plugin; Jest met `ts-jest` doet dat out-of-the-box. Nest-conventie is `*.spec.ts`. De domein-/applicatietests zijn framework-vrij en draaien even goed in Jest.
+
+> **Waarom amqplib i.p.v. `@nestjs/microservices`.** De Nest RMQ-transport is queue-/RPC-georiënteerd; ons contract (`docs/events.md`) is een gedeelde durable **topic-exchange** met eigen routing keys en een vaste envelope. amqplib in een Nest-provider mapt daar 1-op-1 op en houdt de envelope exact.
 
 ## Global Constraints
 
 - Poort **8003** via `SERVICE_PORT`; DB via `DATABASE_URL` (`postgres://rws:rws@postgres:5432/onderhoud_db`); broker via `RABBITMQ_URL` (`amqp://rws:rws@rabbitmq:5672`).
-- `GET /health` geeft `200` zodra DB- en broker-connectie er zijn.
-- Alle REST onder basispad **`/api`**.
+- Globale route-prefix **`/api`**, met `/health` uitgezonderd (`app.setGlobalPrefix('api', { exclude: ['health'] })`). `GET /health` geeft `200` zodra DB- en broker-connectie er zijn.
 - Events publiceren op durable topic-exchange **`rws.events`**, routing key `onderhoud.<aggregate>.<event>`, met de vaste envelope: `{ eventId (uuid), eventType, occurredAt (ISO-8601 UTC), producer:"onderhoud", version:1, data }`.
 - Gepubliceerde events (exact deze 4, payloads uit `docs/events.md`): `onderhoud.storing.gemeld`, `onderhoud.onderhoud.gestart`, `onderhoud.onderhoud.afgerond`, `onderhoud.contractaanvraag.ingediend`.
-- Geconsumeerde events: `monitoring.incident.aangemaakt`, `contract.onderhoudscontract.gegund` (+ `.afgerond`), `beheer.kunstwerk.*`, `beheer.onderhoudseisen.vastgesteld`. Consumers zijn **idempotent** (dedupe op `eventId` in tabel `VerwerktEvent`).
+- Geconsumeerde events: `monitoring.incident.aangemaakt`, `contract.onderhoudscontract.gegund` (+ `.afgerond`), `beheer.kunstwerk.*`, `beheer.onderhoudseisen.vastgesteld`. Consumers zijn **idempotent** (dedupe op `eventId` in tabel `verwerkt_event`).
 - Ubiquitous language uit `onderhoud/README.md`: Storing (StoringId) · Diagnose · Onderhoud (OnderhoudId) · OnderhoudsSchema (SchemaId) · Inspectie · Factuur (FactuurId) · AannemerId · Status. `kunstwerkId`/`contractId`/`incidentId` zijn referenties naar andere contexts — nooit hun model kopiëren.
 - `ernst` volgt de enum uit het verslag: **Laag / Middel / Hoog / Kritiek**.
 - Vertaal inkomende events en externe aannemersformaten aan de rand (`infrastructure`); envelope en externe modellen lekken nooit in `domain`.
-- `domain` importeert **niets** uit `infrastructure`/`interface`/frameworks.
+- `domain` importeert **niets** uit `infrastructure`/`interface`/NestJS/TypeORM. Geen decorators op domeinklassen.
 - `VALIDATIE` = `soepel` (default, Fase 1: onbekend kunstwerk/contract → waarschuwing) of `streng` (Fase 2: weigeren).
 - Bedragen als gehele **centen** (integer); valuta `EUR`.
+- Poort-injectie in Nest gaat via **string-tokens** (bv. `STORING_REPOSITORY`, `EVENT_PUBLISHER`); use cases hangen af van de domein-/applicatie-interfaces, niet van concrete klassen.
 - Werk op branch `onderhoud-service`. Commit na elke taak.
 
 ---
 
-### Task 1: Projectscaffold + config + `/health` (static)
+### Task 1: NestJS-scaffold + config + `/health` (static)
 
-Walking-skeleton-start: een Fastify-server die op 8003 draait met een statisch `/health`.
+Walking-skeleton-start: een NestJS-app die op 8003 draait met globale prefix `/api` en een statisch `/health` via Terminus.
 
 **Files:**
 - Create: `onderhoud/package.json`
 - Create: `onderhoud/tsconfig.json`
-- Create: `onderhoud/vitest.config.ts`
+- Create: `onderhoud/tsconfig.build.json`
+- Create: `onderhoud/nest-cli.json`
 - Create: `onderhoud/.gitignore`
-- Create: `onderhoud/src/infrastructure/config.ts`
-- Create: `onderhoud/src/interface/http/health-route.ts`
-- Create: `onderhoud/src/interface/http/app.ts`
+- Create: `onderhoud/src/infrastructure/config/config.ts`
+- Create: `onderhoud/src/infrastructure/config/config.module.ts`
+- Create: `onderhoud/src/interface/health/health.controller.ts`
+- Create: `onderhoud/src/interface/health/health.module.ts`
+- Create: `onderhoud/src/app.module.ts`
 - Create: `onderhoud/src/main.ts`
-- Test: `onderhoud/test/infrastructure/config.test.ts`
+- Test: `onderhoud/test/infrastructure/config.spec.ts`
 
 **Interfaces:**
-- Produces: `laadConfig(env: NodeJS.ProcessEnv): Config` waarbij `Config = { poort: number; databaseUrl: string; rabbitmqUrl: string; validatie: 'soepel' | 'streng' }`.
-- Produces: `bouwApp(deps?: AppDeps): FastifyInstance` (in Task 1 zonder deps; uitgebreid in Task 17, wordt daar `async`).
+- Produces: `laadConfig(env: NodeJS.ProcessEnv): AppConfig` waarbij `AppConfig = { poort: number; databaseUrl: string; rabbitmqUrl: string; validatie: 'soepel' | 'streng' }`; token `APP_CONFIG`.
+- Produces: `AppModule` (uitgebreid in latere taken), `HealthModule`.
 
 - [ ] **Step 1: Branch aanmaken + scaffold `package.json`**
 
@@ -57,70 +66,107 @@ git checkout -b onderhoud-service
   "name": "onderhoud-service",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "typeorm": "typeorm-ts-node-commonjs -d src/infrastructure/db/data-source.ts",
+    "migration:generate": "npm run typeorm -- migration:generate",
+    "migration:run": "npm run typeorm -- migration:run"
   },
   "dependencies": {
-    "@fastify/swagger": "^9.4.0",
-    "@fastify/swagger-ui": "^5.2.0",
-    "@prisma/client": "^6.1.0",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/swagger": "^8.1.0",
+    "@nestjs/terminus": "^11.0.0",
+    "@nestjs/typeorm": "^11.0.0",
     "amqplib": "^0.10.5",
-    "fastify": "^5.2.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "pg": "^8.13.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.20",
     "uuid": "^11.0.3"
   },
   "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/testing": "^11.0.0",
     "@types/amqplib": "^0.10.6",
+    "@types/express": "^5.0.0",
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.10.0",
-    "prisma": "^6.1.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "@types/supertest": "^6.0.2",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "jest": {
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": ".",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": { "^.+\\.ts$": "ts-jest" },
+    "collectCoverageFrom": ["src/**/*.ts"],
+    "testEnvironment": "node"
   }
 }
 ```
 
-- [ ] **Step 2: `tsconfig.json`**
+> **Let op:** anders dan de Prisma-versie gebruiken we **geen** `"type": "module"`. NestJS + TypeORM + `ts-jest` draaien op CommonJS; imports gebruiken daarom **geen** `.js`-extensie.
+
+- [ ] **Step 2: `tsconfig.json` + `tsconfig.build.json`**
 
 `onderhoud/tsconfig.json`:
 ```json
 {
   "compilerOptions": {
+    "module": "commonjs",
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "outDir": "./dist",
+    "baseUrl": "./",
     "declaration": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "strict": true,
+    "strictPropertyInitialization": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "test"]
+  "include": ["src", "test"],
+  "exclude": ["node_modules", "dist"]
 }
 ```
 
-- [ ] **Step 3: `vitest.config.ts` en `.gitignore`**
+> `strictPropertyInitialization: false` is nodig omdat NestJS-controllers/providers en TypeORM-entities eigenschappen via DI/ORM vullen. De rest van `strict` blijft aan.
 
-`onderhoud/vitest.config.ts`:
-```ts
-import { defineConfig } from 'vitest/config';
+`onderhoud/tsconfig.build.json`:
+```json
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "test", "dist", "**/*.spec.ts"]
+}
+```
 
-export default defineConfig({
-  test: {
-    include: ['test/**/*.test.ts'],
-    environment: 'node',
-  },
-});
+- [ ] **Step 3: `nest-cli.json` en `.gitignore`**
+
+`onderhoud/nest-cli.json`:
+```json
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": { "deleteOutDir": true }
+}
 ```
 
 `onderhoud/.gitignore`:
@@ -132,10 +178,9 @@ dist/
 
 - [ ] **Step 4: Write the failing test voor config**
 
-`onderhoud/test/infrastructure/config.test.ts`:
+`onderhoud/test/infrastructure/config.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { laadConfig } from '../../src/infrastructure/config.js';
+import { laadConfig } from '../../src/infrastructure/config/config';
 
 describe('laadConfig', () => {
   const basis = {
@@ -161,16 +206,18 @@ describe('laadConfig', () => {
 Run: `cd onderhoud && npm install && npm test -- config`
 Expected: FAIL — `laadConfig` bestaat nog niet.
 
-- [ ] **Step 6: Implementeer `config.ts`**
+- [ ] **Step 6: Implementeer `config.ts` + `config.module.ts`**
 
-`onderhoud/src/infrastructure/config.ts`:
+`onderhoud/src/infrastructure/config/config.ts`:
 ```ts
-export interface Config {
+export interface AppConfig {
   poort: number;
   databaseUrl: string;
   rabbitmqUrl: string;
   validatie: 'soepel' | 'streng';
 }
+
+export const APP_CONFIG = 'APP_CONFIG';
 
 function verplicht(env: NodeJS.ProcessEnv, naam: string): string {
   const waarde = env[naam];
@@ -178,7 +225,7 @@ function verplicht(env: NodeJS.ProcessEnv, naam: string): string {
   return waarde;
 }
 
-export function laadConfig(env: NodeJS.ProcessEnv): Config {
+export function laadConfig(env: NodeJS.ProcessEnv): AppConfig {
   return {
     poort: Number(env.SERVICE_PORT ?? '8003'),
     databaseUrl: verplicht(env, 'DATABASE_URL'),
@@ -188,143 +235,261 @@ export function laadConfig(env: NodeJS.ProcessEnv): Config {
 }
 ```
 
+`onderhoud/src/infrastructure/config/config.module.ts`:
+```ts
+import { Global, Module } from '@nestjs/common';
+import { APP_CONFIG, laadConfig } from './config';
+
+@Global()
+@Module({
+  providers: [{ provide: APP_CONFIG, useFactory: () => laadConfig(process.env) }],
+  exports: [APP_CONFIG],
+})
+export class AppConfigModule {}
+```
+
 - [ ] **Step 7: Run test to verify it passes**
 
 Run: `npm test -- config`
 Expected: PASS (2 tests).
 
-- [ ] **Step 8: Health-route + app + main (static skeleton)**
+- [ ] **Step 8: Health-controller + module (static)**
 
-`onderhoud/src/interface/http/health-route.ts`:
+`onderhoud/src/interface/health/health.controller.ts`:
 ```ts
-import type { FastifyInstance } from 'fastify';
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
 
-export interface HealthChecks {
-  db?: () => Promise<boolean>;
-  broker?: () => Promise<boolean>;
-}
+@Controller('health')
+export class HealthController {
+  constructor(private readonly health: HealthCheckService) {}
 
-export function registreerHealthRoute(app: FastifyInstance, checks: HealthChecks = {}): void {
-  app.get('/health', async (_req, reply) => {
-    const db = checks.db ? await checks.db().catch(() => false) : true;
-    const broker = checks.broker ? await checks.broker().catch(() => false) : true;
-    const gezond = db && broker;
-    reply.code(gezond ? 200 : 503).send({ status: gezond ? 'ok' : 'degraded', db, broker });
-  });
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([]);
+  }
 }
 ```
 
-`onderhoud/src/interface/http/app.ts`:
+`onderhoud/src/interface/health/health.module.ts`:
 ```ts
-import Fastify, { type FastifyInstance } from 'fastify';
-import { registreerHealthRoute, type HealthChecks } from './health-route.js';
+import { Module } from '@nestjs/common';
+import { TerminusModule } from '@nestjs/terminus';
+import { HealthController } from './health.controller';
 
-export interface AppDeps {
-  health?: HealthChecks;
-}
+@Module({
+  imports: [TerminusModule],
+  controllers: [HealthController],
+})
+export class HealthModule {}
+```
 
-export function bouwApp(deps: AppDeps = {}): FastifyInstance {
-  const app = Fastify({ logger: true });
-  registreerHealthRoute(app, deps.health);
-  return app;
-}
+- [ ] **Step 9: `app.module.ts` + `main.ts`**
+
+`onderhoud/src/app.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { AppConfigModule } from './infrastructure/config/config.module';
+import { HealthModule } from './interface/health/health.module';
+
+@Module({
+  imports: [AppConfigModule, HealthModule],
+})
+export class AppModule {}
 ```
 
 `onderhoud/src/main.ts`:
 ```ts
-import { laadConfig } from './infrastructure/config.js';
-import { bouwApp } from './interface/http/app.js';
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+import { APP_CONFIG, type AppConfig } from './infrastructure/config/config';
 
-async function start(): Promise<void> {
-  const config = laadConfig(process.env);
-  const app = bouwApp();
-  await app.listen({ host: '0.0.0.0', port: config.poort });
+async function bootstrap(): Promise<void> {
+  const app = await NestFactory.create(AppModule);
+  app.setGlobalPrefix('api', { exclude: ['health'] });
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  const config = app.get<AppConfig>(APP_CONFIG);
+  await app.listen(config.poort, '0.0.0.0');
 }
 
-start().catch((fout) => {
+bootstrap().catch((fout) => {
   console.error('Opstarten mislukt', fout);
   process.exit(1);
 });
 ```
 
-- [ ] **Step 9: Manuele verificatie**
+- [ ] **Step 10: Manuele verificatie**
 
-Run: `SERVICE_PORT=8003 DATABASE_URL=x RABBITMQ_URL=x npx tsx src/main.ts` en in een tweede shell `curl -s localhost:8003/health`.
-Expected: `{"status":"ok","db":true,"broker":true}` en HTTP 200. Stop de server.
+Run: `SERVICE_PORT=8003 DATABASE_URL=x RABBITMQ_URL=x npm run start` en in een tweede shell `curl -s localhost:8003/health`.
+Expected: `{"status":"ok","info":{},"error":{},"details":{}}` en HTTP 200. `curl -s localhost:8003/api/health` geeft 404 (health staat buiten de prefix). Stop de server.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
-git add onderhoud/package.json onderhoud/tsconfig.json onderhoud/vitest.config.ts onderhoud/.gitignore onderhoud/src onderhoud/test
-git commit -m "feat(onderhoud): scaffold Fastify-skeleton met config en /health"
+git add onderhoud/package.json onderhoud/tsconfig.json onderhoud/tsconfig.build.json onderhoud/nest-cli.json onderhoud/.gitignore onderhoud/src onderhoud/test
+git commit -m "feat(onderhoud): NestJS-scaffold met config en /health"
 ```
 
 ---
 
-### Task 2: Prisma-bootstrap + DB-health
+### Task 2: TypeORM-bootstrap + DB-health
 
-Verbind met `onderhoud_db` en laat `/health` de DB checken. Schema bevat nu alleen de read-model-/idempotentietabellen; domeintabellen volgen in Task 11.
+Verbind met `onderhoud_db` via TypeORM en laat `/health` de DB pingen. Nu alleen de read-model-/idempotentie-entities; domein-entities volgen in Task 11.
 
 **Files:**
-- Create: `onderhoud/prisma/schema.prisma`
-- Create: `onderhoud/src/infrastructure/db/prisma-client.ts`
-- Modify: `onderhoud/src/main.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/bekend-kunstwerk.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/geldend-contract.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/onderhoudseis.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/verwerkt-event.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/data-source.ts`
+- Create: `onderhoud/src/infrastructure/db/database.module.ts`
+- Modify: `onderhoud/src/app.module.ts`
+- Modify: `onderhoud/src/interface/health/health.controller.ts`
+- Modify: `onderhoud/src/interface/health/health.module.ts`
 - Modify: `onderhoud/.env.example` (var `VALIDATIE` toevoegen)
 
 **Interfaces:**
-- Consumes: `laadConfig` (Task 1), `registreerHealthRoute`/`AppDeps` (Task 1).
-- Produces: `maakPrismaClient(databaseUrl: string): PrismaClient`.
+- Consumes: `APP_CONFIG`/`AppConfig` (Task 1).
+- Produces: `buildTypeOrmOptions(databaseUrl: string): DataSourceOptions`, `AppDataSource` (voor de CLI), `DatabaseModule`.
 
-- [ ] **Step 1: Prisma-schema (read-models + idempotentie)**
+- [ ] **Step 1: Read-model-entities**
 
-`onderhoud/prisma/schema.prisma`:
-```prisma
-generator client {
-  provider = "prisma-client-js"
-}
+`onderhoud/src/infrastructure/db/entities/bekend-kunstwerk.entity.ts`:
+```ts
+import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
+@Entity({ name: 'bekend_kunstwerk' })
+export class BekendKunstwerkEntity {
+  @PrimaryColumn()
+  kunstwerkId: string;
 
-// Read-model: kunstwerken uit Beheer (alleen ID + minimale info, geen kopie van hun model)
-model BekendKunstwerk {
-  kunstwerkId  String   @id
-  type         String?
-  locatie      String?
-  inGebruik    Boolean  @default(true)
-  bijgewerktOp DateTime @updatedAt
-}
+  @Column({ type: 'text', nullable: true })
+  type: string | null;
 
-// Read-model: gegunde onderhoudscontracten uit Contract (welke aannemer mag aan welk kunstwerk werken)
-model GeldendContract {
-  contractId    String    @id
-  kunstwerkId   String
-  opdrachtnemer String
-  looptijdStart DateTime?
-  looptijdEind  DateTime?
-  actief        Boolean   @default(true)
-  bijgewerktOp  DateTime  @updatedAt
+  @Column({ type: 'text', nullable: true })
+  locatie: string | null;
 
-  @@index([kunstwerkId])
-}
+  @Column({ default: true })
+  inGebruik: boolean;
 
-// Read-model: onderhoudseisen uit Beheer (partnership)
-model Onderhoudseis {
-  kunstwerkId  String   @id
-  eisen        Json
-  bijgewerktOp DateTime @updatedAt
-}
-
-// Idempotentie: verwerkte eventId's van alle consumers
-model VerwerktEvent {
-  eventId    String   @id
-  verwerktOp DateTime @default(now())
+  @UpdateDateColumn()
+  bijgewerktOp: Date;
 }
 ```
 
-- [ ] **Step 2: `.env.example` bijwerken**
+`onderhoud/src/infrastructure/db/entities/geldend-contract.entity.ts`:
+```ts
+import { Column, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+
+@Entity({ name: 'geldend_contract' })
+export class GeldendContractEntity {
+  @PrimaryColumn()
+  contractId: string;
+
+  @Index()
+  @Column()
+  kunstwerkId: string;
+
+  @Column()
+  opdrachtnemer: string;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  looptijdStart: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  looptijdEind: Date | null;
+
+  @Column({ default: true })
+  actief: boolean;
+
+  @UpdateDateColumn()
+  bijgewerktOp: Date;
+}
+```
+
+`onderhoud/src/infrastructure/db/entities/onderhoudseis.entity.ts`:
+```ts
+import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+
+@Entity({ name: 'onderhoudseis' })
+export class OnderhoudseisEntity {
+  @PrimaryColumn()
+  kunstwerkId: string;
+
+  @Column({ type: 'jsonb' })
+  eisen: unknown;
+
+  @UpdateDateColumn()
+  bijgewerktOp: Date;
+}
+```
+
+`onderhoud/src/infrastructure/db/entities/verwerkt-event.entity.ts`:
+```ts
+import { Column, Entity, PrimaryColumn } from 'typeorm';
+
+@Entity({ name: 'verwerkt_event' })
+export class VerwerktEventEntity {
+  @PrimaryColumn()
+  eventId: string;
+
+  @Column({ type: 'timestamptz', default: () => 'now()' })
+  verwerktOp: Date;
+}
+```
+
+- [ ] **Step 2: `data-source.ts` (gedeeld door app + CLI)**
+
+`onderhoud/src/infrastructure/db/data-source.ts`:
+```ts
+import 'reflect-metadata';
+import { DataSource, type DataSourceOptions } from 'typeorm';
+
+export function buildTypeOrmOptions(databaseUrl: string): DataSourceOptions {
+  return {
+    type: 'postgres',
+    url: databaseUrl,
+    entities: [__dirname + '/entities/*.entity.{ts,js}'],
+    migrations: [__dirname + '/migrations/*.{ts,js}'],
+    synchronize: false,
+  };
+}
+
+// Voor de TypeORM-CLI (migration:generate / migration:run).
+export const AppDataSource = new DataSource(
+  buildTypeOrmOptions(process.env.DATABASE_URL ?? 'postgres://rws:rws@localhost:5432/onderhoud_db'),
+);
+```
+
+- [ ] **Step 3: `database.module.ts`**
+
+`onderhoud/src/infrastructure/db/database.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { APP_CONFIG, type AppConfig } from '../config/config';
+import { buildTypeOrmOptions } from './data-source';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRootAsync({
+      inject: [APP_CONFIG],
+      useFactory: (config: AppConfig) => ({
+        ...buildTypeOrmOptions(config.databaseUrl),
+        migrationsRun: true,
+      }),
+    }),
+  ],
+})
+export class DatabaseModule {}
+```
+
+> `migrationsRun: true` draait openstaande migraties bij het opstarten — de NestJS/TypeORM-tegenhanger van `prisma migrate deploy` in de container.
+
+- [ ] **Step 4: `.env.example` bijwerken**
 
 `onderhoud/.env.example`:
 ```
@@ -335,79 +500,95 @@ RABBITMQ_URL=amqp://rws:rws@rabbitmq:5672
 VALIDATIE=soepel
 ```
 
-- [ ] **Step 3: Migratie aanmaken**
+- [ ] **Step 5: Migratie aanmaken**
 
 Start de gedeelde infra vanuit de repo-root: `docker compose up -d postgres`.
-Run (in `onderhoud/`): `DATABASE_URL=postgres://rws:rws@localhost:5432/onderhoud_db npx prisma migrate dev --name init-readmodel`
-Expected: migratie `prisma/migrations/*/migration.sql` aangemaakt; tabellen `BekendKunstwerk`, `GeldendContract`, `Onderhoudseis`, `VerwerktEvent` bestaan.
+Run (in `onderhoud/`): `DATABASE_URL=postgres://rws:rws@localhost:5432/onderhoud_db npm run migration:generate -- src/infrastructure/db/migrations/InitReadModel`
+Expected: migratie `src/infrastructure/db/migrations/*-InitReadModel.ts` aangemaakt met de vier tabellen. Draai `DATABASE_URL=postgres://rws:rws@localhost:5432/onderhoud_db npm run migration:run` en controleer dat `bekend_kunstwerk`, `geldend_contract`, `onderhoudseis`, `verwerkt_event` bestaan.
 
-- [ ] **Step 4: Prisma-clientfabriek**
+- [ ] **Step 6: DB-health via Terminus koppelen**
 
-`onderhoud/src/infrastructure/db/prisma-client.ts`:
+`onderhoud/src/interface/health/health.controller.ts`:
 ```ts
-import { PrismaClient } from '@prisma/client';
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheck, HealthCheckService, TypeOrmHealthIndicator } from '@nestjs/terminus';
 
-export function maakPrismaClient(databaseUrl: string): PrismaClient {
-  return new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+@Controller('health')
+export class HealthController {
+  constructor(
+    private readonly health: HealthCheckService,
+    private readonly db: TypeOrmHealthIndicator,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([() => this.db.pingCheck('database')]);
+  }
 }
 ```
 
-- [ ] **Step 5: DB-health koppelen in `main.ts`**
-
-Vervang de body van `start()` in `onderhoud/src/main.ts`:
+`onderhoud/src/interface/health/health.module.ts`:
 ```ts
-import { laadConfig } from './infrastructure/config.js';
-import { bouwApp } from './interface/http/app.js';
-import { maakPrismaClient } from './infrastructure/db/prisma-client.js';
+import { Module } from '@nestjs/common';
+import { TerminusModule } from '@nestjs/terminus';
+import { HealthController } from './health.controller';
 
-async function start(): Promise<void> {
-  const config = laadConfig(process.env);
-  const prisma = maakPrismaClient(config.databaseUrl);
-
-  const app = bouwApp({
-    health: {
-      db: async () => {
-        await prisma.$queryRaw`SELECT 1`;
-        return true;
-      },
-    },
-  });
-
-  await app.listen({ host: '0.0.0.0', port: config.poort });
-}
-
-start().catch((fout) => {
-  console.error('Opstarten mislukt', fout);
-  process.exit(1);
-});
+@Module({
+  imports: [TerminusModule],
+  controllers: [HealthController],
+})
+export class HealthModule {}
 ```
 
-- [ ] **Step 6: Manuele verificatie**
+> `TypeOrmHealthIndicator` gebruikt de default TypeORM-connectie uit `DatabaseModule`; geen extra provider nodig.
 
-Run: `cp .env.example .env` (pas `DATABASE_URL`-host aan naar `localhost` voor lokaal draaien), `npx prisma generate`, `npx tsx src/main.ts`, dan `curl -s localhost:8003/health`.
-Expected: `{"status":"ok","db":true,...}`; zet postgres stil → `db:false` en HTTP 503.
+- [ ] **Step 7: `app.module.ts` uitbreiden**
 
-- [ ] **Step 7: Commit**
+`onderhoud/src/app.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { AppConfigModule } from './infrastructure/config/config.module';
+import { DatabaseModule } from './infrastructure/db/database.module';
+import { HealthModule } from './interface/health/health.module';
+
+@Module({
+  imports: [AppConfigModule, DatabaseModule, HealthModule],
+})
+export class AppModule {}
+```
+
+- [ ] **Step 8: Manuele verificatie**
+
+Run: `cp .env.example .env` (zet `DATABASE_URL`-host op `localhost` voor lokaal draaien), dan `npm run start`, dan `curl -s localhost:8003/health`.
+Expected: `{"status":"ok",...,"details":{"database":{"status":"up"}}}` (HTTP 200). Zet postgres stil → `status:"error"` en HTTP 503.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add onderhoud/prisma onderhoud/src/infrastructure/db onderhoud/src/main.ts onderhoud/.env.example
-git commit -m "feat(onderhoud): Prisma-bootstrap met read-modeltabellen en DB-health"
+git add onderhoud/src/infrastructure/db onderhoud/src/interface/health onderhoud/src/app.module.ts onderhoud/.env.example
+git commit -m "feat(onderhoud): TypeORM-bootstrap met read-modeltabellen en DB-health"
 ```
 
 ---
 
 ### Task 3: RabbitMQ-connectie + broker-health
 
-Bewijs broker-connectiviteit. Nog geen event-mapping (publisher volgt in Task 12, consumers in Task 13).
+Bewijs broker-connectiviteit met een amqplib-provider die de durable topic-exchange declareert. Nog geen event-mapping (publisher in Task 12, consumers in Task 13).
 
 **Files:**
 - Create: `onderhoud/src/infrastructure/messaging/rabbitmq-connectie.ts`
-- Modify: `onderhoud/src/main.ts`
+- Create: `onderhoud/src/infrastructure/messaging/messaging.module.ts`
+- Create: `onderhoud/src/interface/health/broker-health.indicator.ts`
+- Modify: `onderhoud/src/interface/health/health.controller.ts`
+- Modify: `onderhoud/src/interface/health/health.module.ts`
+- Modify: `onderhoud/src/app.module.ts`
 
 **Interfaces:**
-- Produces: `class RabbitMqConnectie { static async verbind(url: string): Promise<RabbitMqConnectie>; get kanaal(): Channel; isVerbonden(): boolean; async sluit(): Promise<void> }` en constante `RWS_EXCHANGE = 'rws.events'`.
+- Consumes: `APP_CONFIG`/`AppConfig` (Task 1).
+- Produces: `class RabbitMqConnectie { static async verbind(url: string): Promise<RabbitMqConnectie>; get kanaal(): Channel; isVerbonden(): boolean; async sluit(): Promise<void> }`; constante `RWS_EXCHANGE = 'rws.events'`; token `RABBITMQ_CONNECTIE`; `MessagingModule` (global) dat de connectie als provider levert; `BrokerHealthIndicator`.
 
-- [ ] **Step 1: Connectiemodule**
+- [ ] **Step 1: Connectiemodule (framework-vrij)**
 
 `onderhoud/src/infrastructure/messaging/rabbitmq-connectie.ts`:
 ```ts
@@ -443,36 +624,130 @@ export class RabbitMqConnectie {
 }
 
 export const RWS_EXCHANGE = EXCHANGE;
+export const RABBITMQ_CONNECTIE = 'RABBITMQ_CONNECTIE';
 ```
 
-- [ ] **Step 2: Broker-health koppelen in `main.ts`**
+- [ ] **Step 2: `messaging.module.ts` (async provider)**
 
-Voeg toe in `start()` (na de prisma-regel) en breid de health-deps uit:
+`onderhoud/src/infrastructure/messaging/messaging.module.ts`:
 ```ts
-import { RabbitMqConnectie } from './infrastructure/messaging/rabbitmq-connectie.js';
-// ...
-  const rabbit = await RabbitMqConnectie.verbind(config.rabbitmqUrl);
+import { Global, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import { APP_CONFIG, type AppConfig } from '../config/config';
+import { RABBITMQ_CONNECTIE, RabbitMqConnectie } from './rabbitmq-connectie';
 
-  const app = bouwApp({
-    health: {
-      db: async () => {
-        await prisma.$queryRaw`SELECT 1`;
-        return true;
-      },
-      broker: async () => rabbit.isVerbonden(),
+@Global()
+@Module({
+  providers: [
+    {
+      provide: RABBITMQ_CONNECTIE,
+      inject: [APP_CONFIG],
+      useFactory: (config: AppConfig) => RabbitMqConnectie.verbind(config.rabbitmqUrl),
     },
-  });
+  ],
+  exports: [RABBITMQ_CONNECTIE],
+})
+export class MessagingModule implements OnApplicationShutdown {
+  constructor(private readonly moduleRef: ModuleRef) {}
+
+  async onApplicationShutdown(): Promise<void> {
+    const connectie = this.moduleRef.get<RabbitMqConnectie>(RABBITMQ_CONNECTIE, { strict: false });
+    await connectie?.sluit().catch(() => undefined);
+  }
+}
 ```
 
-- [ ] **Step 3: Manuele verificatie**
+- [ ] **Step 3: Broker-health-indicator**
 
-Run: repo-root `docker compose up -d rabbitmq postgres`; dan in `onderhoud/` `npx tsx src/main.ts`; `curl -s localhost:8003/health`.
-Expected: `{"status":"ok","db":true,"broker":true}`. Open `http://localhost:15672` (rws/rws) → exchange `rws.events` bestaat (type topic, durable).
+`onderhoud/src/interface/health/broker-health.indicator.ts`:
+```ts
+import { Inject, Injectable } from '@nestjs/common';
+import { HealthIndicatorService } from '@nestjs/terminus';
+import { RABBITMQ_CONNECTIE, RabbitMqConnectie } from '../../infrastructure/messaging/rabbitmq-connectie';
 
-- [ ] **Step 4: Commit**
+@Injectable()
+export class BrokerHealthIndicator {
+  constructor(
+    private readonly indicator: HealthIndicatorService,
+    @Inject(RABBITMQ_CONNECTIE) private readonly connectie: RabbitMqConnectie,
+  ) {}
+
+  isGezond(key = 'broker') {
+    const check = this.indicator.check(key);
+    return this.connectie.isVerbonden() ? check.up() : check.down();
+  }
+}
+```
+
+> `HealthIndicatorService` is de Terminus 11-API voor eigen indicatoren (`check(key).up()/.down()`).
+
+- [ ] **Step 4: Broker-health koppelen**
+
+`onderhoud/src/interface/health/health.controller.ts`:
+```ts
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheck, HealthCheckService, TypeOrmHealthIndicator } from '@nestjs/terminus';
+import { BrokerHealthIndicator } from './broker-health.indicator';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private readonly health: HealthCheckService,
+    private readonly db: TypeOrmHealthIndicator,
+    private readonly broker: BrokerHealthIndicator,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([
+      () => this.db.pingCheck('database'),
+      () => this.broker.isGezond('broker'),
+    ]);
+  }
+}
+```
+
+`onderhoud/src/interface/health/health.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { TerminusModule } from '@nestjs/terminus';
+import { HealthController } from './health.controller';
+import { BrokerHealthIndicator } from './broker-health.indicator';
+
+@Module({
+  imports: [TerminusModule],
+  controllers: [HealthController],
+  providers: [BrokerHealthIndicator],
+})
+export class HealthModule {}
+```
+
+- [ ] **Step 5: `app.module.ts` uitbreiden**
+
+`onderhoud/src/app.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { AppConfigModule } from './infrastructure/config/config.module';
+import { DatabaseModule } from './infrastructure/db/database.module';
+import { MessagingModule } from './infrastructure/messaging/messaging.module';
+import { HealthModule } from './interface/health/health.module';
+
+@Module({
+  imports: [AppConfigModule, DatabaseModule, MessagingModule, HealthModule],
+})
+export class AppModule {}
+```
+
+- [ ] **Step 6: Manuele verificatie**
+
+Run: repo-root `docker compose up -d rabbitmq postgres`; dan in `onderhoud/` `npm run start`; `curl -s localhost:8003/health`.
+Expected: `status:"ok"` met `details.database.status:"up"` en `details.broker.status:"up"`. Open `http://localhost:15672` (rws/rws) → exchange `rws.events` bestaat (type topic, durable).
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add onderhoud/src/infrastructure/messaging onderhoud/src/main.ts
+git add onderhoud/src/infrastructure/messaging onderhoud/src/interface/health onderhoud/src/app.module.ts
 git commit -m "feat(onderhoud): RabbitMQ-connectie en broker-health"
 ```
 
@@ -480,12 +755,12 @@ git commit -m "feat(onderhoud): RabbitMQ-connectie en broker-health"
 
 ### Task 4: Domein — value objects
 
-Pure value objects met invarianten. Volledig TDD; geen framework-imports.
+Pure value objects met invarianten. Volledig TDD; **geen NestJS/TypeORM-imports, geen decorators**.
 
 **Files:**
 - Create: `onderhoud/src/domain/gedeeld/fouten.ts`
 - Create: `onderhoud/src/domain/gedeeld/waarden.ts`
-- Test: `onderhoud/test/domain/waarden.test.ts`
+- Test: `onderhoud/test/domain/waarden.spec.ts`
 
 **Interfaces:**
 - Produces: `class DomeinFout extends Error`.
@@ -496,17 +771,10 @@ Pure value objects met invarianten. Volledig TDD; geen framework-imports.
 
 - [ ] **Step 1: Write the failing tests**
 
-`onderhoud/test/domain/waarden.test.ts`:
+`onderhoud/test/domain/waarden.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import {
-  Bedrag,
-  ernstVan,
-  KunstwerkId,
-  Periode,
-  StoringId,
-} from '../../src/domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../src/domain/gedeeld/fouten.js';
+import { Bedrag, ernstVan, KunstwerkId, Periode, StoringId } from '../../src/domain/gedeeld/waarden';
+import { DomeinFout } from '../../src/domain/gedeeld/fouten';
 
 describe('identiteiten', () => {
   it('weigert een lege waarde', () => {
@@ -571,7 +839,7 @@ export class DomeinFout extends Error {
 
 `onderhoud/src/domain/gedeeld/waarden.ts`:
 ```ts
-import { DomeinFout } from './fouten.js';
+import { DomeinFout } from './fouten';
 
 abstract class Identiteit {
   protected constructor(readonly waarde: string) {}
@@ -677,7 +945,7 @@ Expected: PASS (alle assertions).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add onderhoud/src/domain/gedeeld onderhoud/test/domain/waarden.test.ts
+git add onderhoud/src/domain/gedeeld onderhoud/test/domain/waarden.spec.ts
 git commit -m "feat(onderhoud): domein-value-objects met invarianten"
 ```
 
@@ -690,7 +958,7 @@ Basisklasse voor event-registratie en de discriminated union van alle 4 gepublic
 **Files:**
 - Create: `onderhoud/src/domain/gedeeld/aggregate-root.ts`
 - Create: `onderhoud/src/domain/gedeeld/domain-events.ts`
-- Test: `onderhoud/test/domain/aggregate-root.test.ts`
+- Test: `onderhoud/test/domain/aggregate-root.spec.ts`
 
 **Interfaces:**
 - Produces: `interface DomainEvent { eventType: string; data: Record<string, unknown> }`.
@@ -699,11 +967,10 @@ Basisklasse voor event-registratie en de discriminated union van alle 4 gepublic
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/domain/aggregate-root.test.ts`:
+`onderhoud/test/domain/aggregate-root.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { AggregateRoot } from '../../src/domain/gedeeld/aggregate-root.js';
-import type { OnderhoudDomainEvent } from '../../src/domain/gedeeld/domain-events.js';
+import { AggregateRoot } from '../../src/domain/gedeeld/aggregate-root';
+import type { OnderhoudDomainEvent } from '../../src/domain/gedeeld/domain-events';
 
 class Test extends AggregateRoot {
   doe(): void {
@@ -768,7 +1035,7 @@ export type OnderhoudDomainEvent =
 
 `onderhoud/src/domain/gedeeld/aggregate-root.ts`:
 ```ts
-import type { OnderhoudDomainEvent } from './domain-events.js';
+import type { OnderhoudDomainEvent } from './domain-events';
 
 export abstract class AggregateRoot {
   private events: OnderhoudDomainEvent[] = [];
@@ -793,7 +1060,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add onderhoud/src/domain/gedeeld/aggregate-root.ts onderhoud/src/domain/gedeeld/domain-events.ts onderhoud/test/domain/aggregate-root.test.ts
+git add onderhoud/src/domain/gedeeld/aggregate-root.ts onderhoud/src/domain/gedeeld/domain-events.ts onderhoud/test/domain/aggregate-root.spec.ts
 git commit -m "feat(onderhoud): AggregateRoot en domain-event-definities"
 ```
 
@@ -806,7 +1073,7 @@ Instappunt 1: een gemelde storing. Plus de domeinregel die bepaalt wanneer een s
 **Files:**
 - Create: `onderhoud/src/domain/storing/storing.ts`
 - Create: `onderhoud/src/domain/diagnose/diagnose.ts`
-- Test: `onderhoud/test/domain/storing.test.ts`
+- Test: `onderhoud/test/domain/storing.spec.ts`
 
 **Interfaces:**
 - Consumes: value objects (Task 4), `AggregateRoot` (Task 5).
@@ -821,13 +1088,12 @@ Instappunt 1: een gemelde storing. Plus de domeinregel die bepaalt wanneer een s
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/domain/storing.test.ts`:
+`onderhoud/test/domain/storing.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { Storing } from '../../src/domain/storing/storing.js';
-import { vereistOnderhoud } from '../../src/domain/diagnose/diagnose.js';
-import { KunstwerkId, OnderhoudId, StoringId } from '../../src/domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../src/domain/gedeeld/fouten.js';
+import { Storing } from '../../src/domain/storing/storing';
+import { vereistOnderhoud } from '../../src/domain/diagnose/diagnose';
+import { KunstwerkId, OnderhoudId, StoringId } from '../../src/domain/gedeeld/waarden';
+import { DomeinFout } from '../../src/domain/gedeeld/fouten';
 
 function nieuweStoring(): Storing {
   return Storing.meld({
@@ -882,7 +1148,7 @@ Expected: FAIL — modules ontbreken.
 
 `onderhoud/src/domain/diagnose/diagnose.ts`:
 ```ts
-import type { Ernst, IncidentId } from '../gedeeld/waarden.js';
+import type { Ernst, IncidentId } from '../gedeeld/waarden';
 
 export interface Diagnose {
   incidentId?: IncidentId;
@@ -899,9 +1165,9 @@ export function vereistOnderhoud(ernst: Ernst): boolean {
 
 `onderhoud/src/domain/storing/storing.ts`:
 ```ts
-import { AggregateRoot } from '../gedeeld/aggregate-root.js';
-import { DomeinFout } from '../gedeeld/fouten.js';
-import type { Ernst, KunstwerkId, OnderhoudId, StoringId } from '../gedeeld/waarden.js';
+import { AggregateRoot } from '../gedeeld/aggregate-root';
+import { DomeinFout } from '../gedeeld/fouten';
+import type { Ernst, KunstwerkId, OnderhoudId, StoringId } from '../gedeeld/waarden';
 
 export type StoringStatus = 'Gemeld' | 'InBehandeling' | 'Afgehandeld';
 
@@ -968,7 +1234,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add onderhoud/src/domain/storing onderhoud/src/domain/diagnose onderhoud/test/domain/storing.test.ts
+git add onderhoud/src/domain/storing onderhoud/src/domain/diagnose onderhoud/test/domain/storing.spec.ts
 git commit -m "feat(onderhoud): Storing-aggregate en diagnose-regel"
 ```
 
@@ -980,7 +1246,7 @@ Het hart van de context: een onderhoudstraject met aanleiding (Storing óf Diagn
 
 **Files:**
 - Create: `onderhoud/src/domain/onderhoud/onderhoud.ts`
-- Test: `onderhoud/test/domain/onderhoud.test.ts`
+- Test: `onderhoud/test/domain/onderhoud.spec.ts`
 
 **Interfaces:**
 - Consumes: value objects (Task 4), `AggregateRoot` (Task 5), `Diagnose` (Task 6).
@@ -989,23 +1255,22 @@ Het hart van de context: een onderhoudstraject met aanleiding (Storing óf Diagn
 - Produces: `type InspectieOordeel = 'Goedgekeurd' | 'Afgekeurd'`; `interface Inspectie { id: InspectieId; datum: Date; oordeel: InspectieOordeel; opmerkingen?: string }`.
 - Produces: `type FactuurStatus = 'Ontvangen' | 'Goedgekeurd' | 'Afgekeurd'`; `interface Factuur { id: FactuurId; bedrag: Bedrag; status: FactuurStatus; ontvangenOp: Date }`.
 - Produces: `class Onderhoud extends AggregateRoot` met:
-  - `static plan(p: { id: OnderhoudId; kunstwerkId: KunstwerkId; aanleiding: Aanleiding }): Onderhoud` (status `Gepland`, geen event — `gestart` is het gepubliceerde moment)
+  - `static plan(p: { id: OnderhoudId; kunstwerkId: KunstwerkId; aanleiding: Aanleiding }): Onderhoud` (status `Gepland`, geen event)
   - `start(p: { datum: Date; contractId?: ContractId; aannemerId?: AannemerId }): void` → event `onderhoud.onderhoud.gestart`
   - `registreerInspectie(p: { id: InspectieId; datum: Date; oordeel: InspectieOordeel; opmerkingen?: string }): void`
   - `rondAf(p: { resultaat: string; datum: Date }): void` → event `onderhoud.onderhoud.afgerond`
   - `ontvangFactuur(p: { id: FactuurId; bedrag: Bedrag; ontvangenOp: Date }): void`
   - `keurFactuurGoed(factuurId: FactuurId): void`
-  - getters: `id`, `kunstwerkId`, `status`, `aanleiding`, `contractId: ContractId | undefined`, `aannemerId: AannemerId | undefined`, `gestartOp: Date | undefined`, `afgerondOp: Date | undefined`, `resultaat: string | undefined`, `inspecties: readonly Inspectie[]`, `facturen: readonly Factuur[]`.
+  - getters: `id`, `kunstwerkId`, `status`, `aanleiding`, `contractId`, `aannemerId`, `gestartOp`, `afgerondOp`, `resultaat`, `inspecties`, `facturen`.
   - `static herstel(p): Onderhoud`.
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/domain/onderhoud.test.ts`:
+`onderhoud/test/domain/onderhoud.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { Onderhoud } from '../../src/domain/onderhoud/onderhoud.js';
-import { Bedrag, ContractId, FactuurId, InspectieId, KunstwerkId, OnderhoudId, StoringId } from '../../src/domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../src/domain/gedeeld/fouten.js';
+import { Onderhoud } from '../../src/domain/onderhoud/onderhoud';
+import { Bedrag, ContractId, FactuurId, InspectieId, KunstwerkId, OnderhoudId, StoringId } from '../../src/domain/gedeeld/waarden';
+import { DomeinFout } from '../../src/domain/gedeeld/fouten';
 
 function nieuwTraject(): Onderhoud {
   return Onderhoud.plan({
@@ -1082,17 +1347,17 @@ describe('Onderhoud', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test -- onderhoud.test`
+Run: `npm test -- onderhoud.spec`
 Expected: FAIL — module ontbreekt.
 
 - [ ] **Step 3: Implementeer `onderhoud.ts`**
 
 `onderhoud/src/domain/onderhoud/onderhoud.ts`:
 ```ts
-import { AggregateRoot } from '../gedeeld/aggregate-root.js';
-import { DomeinFout } from '../gedeeld/fouten.js';
-import type { AannemerId, Bedrag, ContractId, FactuurId, InspectieId, KunstwerkId, OnderhoudId, StoringId } from '../gedeeld/waarden.js';
-import type { Diagnose } from '../diagnose/diagnose.js';
+import { AggregateRoot } from '../gedeeld/aggregate-root';
+import { DomeinFout } from '../gedeeld/fouten';
+import type { AannemerId, Bedrag, ContractId, FactuurId, InspectieId, KunstwerkId, OnderhoudId, StoringId } from '../gedeeld/waarden';
+import type { Diagnose } from '../diagnose/diagnose';
 
 export type OnderhoudStatus = 'Gepland' | 'Gestart' | 'Afgerond';
 
@@ -1214,13 +1479,13 @@ export class Onderhoud extends AggregateRoot {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npm test -- onderhoud.test`
+Run: `npm test -- onderhoud.spec`
 Expected: PASS (7 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add onderhoud/src/domain/onderhoud onderhoud/test/domain/onderhoud.test.ts
+git add onderhoud/src/domain/onderhoud onderhoud/test/domain/onderhoud.spec.ts
 git commit -m "feat(onderhoud): Onderhoud-aggregate met inspectie- en factuurinvarianten"
 ```
 
@@ -1233,29 +1498,28 @@ Het schema met de gegunde aannemer, plus de repository-interfaces van alle drie 
 **Files:**
 - Create: `onderhoud/src/domain/schema/onderhouds-schema.ts`
 - Create: `onderhoud/src/domain/repositories.ts`
-- Test: `onderhoud/test/domain/onderhouds-schema.test.ts`
+- Test: `onderhoud/test/domain/onderhouds-schema.spec.ts`
 
 **Interfaces:**
-- Consumes: value objects (Task 4), `AggregateRoot` (Task 5), `Storing` (Task 6), `Onderhoud` (Task 7).
+- Consumes: value objects (Task 4), `AggregateRoot` (Task 5), aggregates (Tasks 6-7).
 - Produces: `interface GeplandMoment { datum: Date; omschrijving: string }`.
 - Produces: `class OnderhoudsSchema extends AggregateRoot` met:
   - `static maak(p: { id: SchemaId; kunstwerkId: KunstwerkId; contractId: ContractId; aannemer: string; periode: Periode; momenten: GeplandMoment[] }): OnderhoudsSchema`
   - `voegMomentToe(m: GeplandMoment): void`
-  - getters: `id`, `kunstwerkId`, `contractId`, `aannemer`, `periode`, `momenten: readonly GeplandMoment[]`.
+  - getters: `id`, `kunstwerkId`, `contractId`, `aannemer`, `periode`, `momenten`.
   - `static herstel(p): OnderhoudsSchema`.
-- Produces (repository-interfaces):
-  - `interface StoringRepository { bewaar(s: Storing): Promise<void>; zoek(id: StoringId): Promise<Storing | null>; zoekAlle(): Promise<Storing[]> }`
-  - `interface OnderhoudRepository { bewaar(o: Onderhoud): Promise<void>; zoek(id: OnderhoudId): Promise<Onderhoud | null>; zoekAlle(): Promise<Onderhoud[]>; zoekPerKunstwerk(kunstwerkId: KunstwerkId): Promise<Onderhoud[]> }`
-  - `interface SchemaRepository { bewaar(s: OnderhoudsSchema): Promise<void>; zoek(id: SchemaId): Promise<OnderhoudsSchema | null>; zoekAlle(): Promise<OnderhoudsSchema[]> }`
+- Produces (repository-interfaces + DI-tokens):
+  - `interface StoringRepository { bewaar(s: Storing): Promise<void>; zoek(id: StoringId): Promise<Storing | null>; zoekAlle(): Promise<Storing[]> }` + `STORING_REPOSITORY`
+  - `interface OnderhoudRepository { bewaar(o: Onderhoud): Promise<void>; zoek(id: OnderhoudId): Promise<Onderhoud | null>; zoekAlle(): Promise<Onderhoud[]>; zoekPerKunstwerk(kunstwerkId: KunstwerkId): Promise<Onderhoud[]> }` + `ONDERHOUD_REPOSITORY`
+  - `interface SchemaRepository { bewaar(s: OnderhoudsSchema): Promise<void>; zoek(id: SchemaId): Promise<OnderhoudsSchema | null>; zoekAlle(): Promise<OnderhoudsSchema[]> }` + `SCHEMA_REPOSITORY`
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/domain/onderhouds-schema.test.ts`:
+`onderhoud/test/domain/onderhouds-schema.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { OnderhoudsSchema } from '../../src/domain/schema/onderhouds-schema.js';
-import { ContractId, KunstwerkId, Periode, SchemaId } from '../../src/domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../src/domain/gedeeld/fouten.js';
+import { OnderhoudsSchema } from '../../src/domain/schema/onderhouds-schema';
+import { ContractId, KunstwerkId, Periode, SchemaId } from '../../src/domain/gedeeld/waarden';
+import { DomeinFout } from '../../src/domain/gedeeld/fouten';
 
 const periode = Periode.van(new Date('2026-01-01'), new Date('2026-12-31'));
 
@@ -1306,9 +1570,9 @@ Expected: FAIL — module ontbreekt.
 
 `onderhoud/src/domain/schema/onderhouds-schema.ts`:
 ```ts
-import { AggregateRoot } from '../gedeeld/aggregate-root.js';
-import { DomeinFout } from '../gedeeld/fouten.js';
-import type { ContractId, KunstwerkId, Periode, SchemaId } from '../gedeeld/waarden.js';
+import { AggregateRoot } from '../gedeeld/aggregate-root';
+import { DomeinFout } from '../gedeeld/fouten';
+import type { ContractId, KunstwerkId, Periode, SchemaId } from '../gedeeld/waarden';
 
 export interface GeplandMoment {
   datum: Date;
@@ -1365,10 +1629,14 @@ export class OnderhoudsSchema extends AggregateRoot {
 
 `onderhoud/src/domain/repositories.ts`:
 ```ts
-import type { Storing } from './storing/storing.js';
-import type { Onderhoud } from './onderhoud/onderhoud.js';
-import type { OnderhoudsSchema } from './schema/onderhouds-schema.js';
-import type { KunstwerkId, OnderhoudId, SchemaId, StoringId } from './gedeeld/waarden.js';
+import type { Storing } from './storing/storing';
+import type { Onderhoud } from './onderhoud/onderhoud';
+import type { OnderhoudsSchema } from './schema/onderhouds-schema';
+import type { KunstwerkId, OnderhoudId, SchemaId, StoringId } from './gedeeld/waarden';
+
+export const STORING_REPOSITORY = 'STORING_REPOSITORY';
+export const ONDERHOUD_REPOSITORY = 'ONDERHOUD_REPOSITORY';
+export const SCHEMA_REPOSITORY = 'SCHEMA_REPOSITORY';
 
 export interface StoringRepository {
   bewaar(s: Storing): Promise<void>;
@@ -1398,7 +1666,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add onderhoud/src/domain/schema onderhoud/src/domain/repositories.ts onderhoud/test/domain/onderhouds-schema.test.ts
+git add onderhoud/src/domain/schema onderhoud/src/domain/repositories.ts onderhoud/test/domain/onderhouds-schema.spec.ts
 git commit -m "feat(onderhoud): OnderhoudsSchema-aggregate en repository-interfaces"
 ```
 
@@ -1406,33 +1674,36 @@ git commit -m "feat(onderhoud): OnderhoudsSchema-aggregate en repository-interfa
 
 ### Task 9: Application — ports, fakes & instap-use-cases (MeldStoring + StelDiagnose)
 
-De twee instappunten uit de README. `MeldStoring` plant bij ernst Hoog/Kritiek automatisch een onderhoudstraject en koppelt de storing; `StelDiagnose` doet hetzelfde op basis van monitoringdata (incident).
+De twee instappunten uit de README. `MeldStoring` plant bij ernst Hoog/Kritiek automatisch een onderhoudstraject en koppelt de storing; `StelDiagnose` doet hetzelfde op basis van monitoringdata (incident). **Use cases zijn plain TypeScript-klassen zonder NestJS-decorators** — de DI-bedrading (Task 17) roept `new` aan via `useFactory`, zodat de application-laag framework-vrij blijft en de unit-tests de fakes rechtstreeks injecteren.
 
 **Files:**
 - Create: `onderhoud/src/application/ports.ts`
 - Create: `onderhoud/src/application/storing/meld-storing.ts`
 - Create: `onderhoud/src/application/diagnose/stel-diagnose.ts`
 - Create: `onderhoud/test/support/fakes.ts`
-- Test: `onderhoud/test/application/instap-usecases.test.ts`
+- Test: `onderhoud/test/application/instap-usecases.spec.ts`
 
 **Interfaces:**
 - Consumes: repository-interfaces (Task 8), aggregates (Tasks 6-8), `vereistOnderhoud` (Task 6).
-- Produces (ports, aanvullend op de domain-repos):
-  - `interface EventPublisher { publiceer(events: OnderhoudDomainEvent[]): Promise<void> }`
-  - `interface KunstwerkenReadModel { isBekendEnInGebruik(id: KunstwerkId): Promise<boolean> }`
-  - `interface ContractenReadModel { geldendContractVoor(id: KunstwerkId): Promise<{ contractId: string; opdrachtnemer: string } | null> }`
-  - `interface IdGenerator { nieuw(): string }`
-- Produces (use cases):
-  - `class MeldStoring { constructor(storingen: StoringRepository, onderhouden: OnderhoudRepository, publisher: EventPublisher, kunstwerken: KunstwerkenReadModel, ids: IdGenerator, validatie: 'soepel' | 'streng'); uitvoeren(cmd: { kunstwerkId: string; omschrijving: string; ernst: string }): Promise<{ storingId: string; onderhoudId?: string }> }`
-  - `class StelDiagnose { constructor(onderhouden: OnderhoudRepository, ids: IdGenerator); uitvoeren(cmd: { kunstwerkId: string; incidentId?: string; bevinding: string; ernst: string }): Promise<{ onderhoudId: string | null }> }`
+- Produces (ports + DI-tokens):
+  - `interface EventPublisher { publiceer(events: OnderhoudDomainEvent[]): Promise<void> }` + `EVENT_PUBLISHER`
+  - `interface KunstwerkenReadModel { isBekendEnInGebruik(id: KunstwerkId): Promise<boolean> }` + `KUNSTWERKEN_READ_MODEL`
+  - `interface ContractenReadModel { geldendContractVoor(id: KunstwerkId): Promise<{ contractId: string; opdrachtnemer: string } | null> }` + `CONTRACTEN_READ_MODEL`
+  - `interface IdGenerator { nieuw(): string }` + `ID_GENERATOR`
+- Produces (use cases): `MeldStoring`, `StelDiagnose` (elk `uitvoeren(cmd)`).
 - Produces (test-fakes): `InMemoryStoringRepository`, `InMemoryOnderhoudRepository`, `InMemorySchemaRepository`, `FakeEventPublisher`, `FakeKunstwerkenReadModel`, `FakeContractenReadModel`, `VasteIdGenerator`.
 
 - [ ] **Step 1: Ports definiëren**
 
 `onderhoud/src/application/ports.ts`:
 ```ts
-import type { KunstwerkId } from '../domain/gedeeld/waarden.js';
-import type { OnderhoudDomainEvent } from '../domain/gedeeld/domain-events.js';
+import type { KunstwerkId } from '../domain/gedeeld/waarden';
+import type { OnderhoudDomainEvent } from '../domain/gedeeld/domain-events';
+
+export const EVENT_PUBLISHER = 'EVENT_PUBLISHER';
+export const KUNSTWERKEN_READ_MODEL = 'KUNSTWERKEN_READ_MODEL';
+export const CONTRACTEN_READ_MODEL = 'CONTRACTEN_READ_MODEL';
+export const ID_GENERATOR = 'ID_GENERATOR';
 
 export interface EventPublisher {
   publiceer(events: OnderhoudDomainEvent[]): Promise<void>;
@@ -1455,13 +1726,13 @@ export interface IdGenerator {
 
 `onderhoud/test/support/fakes.ts`:
 ```ts
-import type { OnderhoudRepository, SchemaRepository, StoringRepository } from '../../src/domain/repositories.js';
-import type { ContractenReadModel, EventPublisher, IdGenerator, KunstwerkenReadModel } from '../../src/application/ports.js';
-import type { Storing } from '../../src/domain/storing/storing.js';
-import type { Onderhoud } from '../../src/domain/onderhoud/onderhoud.js';
-import type { OnderhoudsSchema } from '../../src/domain/schema/onderhouds-schema.js';
-import type { KunstwerkId, OnderhoudId, SchemaId, StoringId } from '../../src/domain/gedeeld/waarden.js';
-import type { OnderhoudDomainEvent } from '../../src/domain/gedeeld/domain-events.js';
+import type { OnderhoudRepository, SchemaRepository, StoringRepository } from '../../src/domain/repositories';
+import type { ContractenReadModel, EventPublisher, IdGenerator, KunstwerkenReadModel } from '../../src/application/ports';
+import type { Storing } from '../../src/domain/storing/storing';
+import type { Onderhoud } from '../../src/domain/onderhoud/onderhoud';
+import type { OnderhoudsSchema } from '../../src/domain/schema/onderhouds-schema';
+import type { KunstwerkId, OnderhoudId, SchemaId, StoringId } from '../../src/domain/gedeeld/waarden';
+import type { OnderhoudDomainEvent } from '../../src/domain/gedeeld/domain-events';
 
 export class InMemoryStoringRepository implements StoringRepository {
   private opslag = new Map<string, Storing>();
@@ -1512,18 +1783,17 @@ export class VasteIdGenerator implements IdGenerator {
 
 - [ ] **Step 3: Write the failing test**
 
-`onderhoud/test/application/instap-usecases.test.ts`:
+`onderhoud/test/application/instap-usecases.spec.ts`:
 ```ts
-import { beforeEach, describe, expect, it } from 'vitest';
-import { MeldStoring } from '../../src/application/storing/meld-storing.js';
-import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose.js';
+import { MeldStoring } from '../../src/application/storing/meld-storing';
+import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose';
 import {
   FakeEventPublisher,
   FakeKunstwerkenReadModel,
   InMemoryOnderhoudRepository,
   InMemoryStoringRepository,
   VasteIdGenerator,
-} from '../support/fakes.js';
+} from '../support/fakes';
 
 describe('MeldStoring', () => {
   let storingen: InMemoryStoringRepository;
@@ -1603,13 +1873,13 @@ Expected: FAIL — use cases ontbreken.
 
 `onderhoud/src/application/storing/meld-storing.ts`:
 ```ts
-import { Storing } from '../../domain/storing/storing.js';
-import { Onderhoud } from '../../domain/onderhoud/onderhoud.js';
-import { vereistOnderhoud } from '../../domain/diagnose/diagnose.js';
-import { ernstVan, KunstwerkId, OnderhoudId, StoringId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { OnderhoudRepository, StoringRepository } from '../../domain/repositories.js';
-import type { EventPublisher, IdGenerator, KunstwerkenReadModel } from '../ports.js';
+import { Storing } from '../../domain/storing/storing';
+import { Onderhoud } from '../../domain/onderhoud/onderhoud';
+import { vereistOnderhoud } from '../../domain/diagnose/diagnose';
+import { ernstVan, KunstwerkId, OnderhoudId, StoringId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { OnderhoudRepository, StoringRepository } from '../../domain/repositories';
+import type { EventPublisher, IdGenerator, KunstwerkenReadModel } from '../ports';
 
 export interface MeldStoringCommand {
   kunstwerkId: string;
@@ -1662,11 +1932,11 @@ export class MeldStoring {
 
 `onderhoud/src/application/diagnose/stel-diagnose.ts`:
 ```ts
-import { Onderhoud } from '../../domain/onderhoud/onderhoud.js';
-import { vereistOnderhoud } from '../../domain/diagnose/diagnose.js';
-import { ernstVan, IncidentId, KunstwerkId, OnderhoudId } from '../../domain/gedeeld/waarden.js';
-import type { OnderhoudRepository } from '../../domain/repositories.js';
-import type { IdGenerator } from '../ports.js';
+import { Onderhoud } from '../../domain/onderhoud/onderhoud';
+import { vereistOnderhoud } from '../../domain/diagnose/diagnose';
+import { ernstVan, IncidentId, KunstwerkId, OnderhoudId } from '../../domain/gedeeld/waarden';
+import type { OnderhoudRepository } from '../../domain/repositories';
+import type { IdGenerator } from '../ports';
 
 export interface StelDiagnoseCommand {
   kunstwerkId: string;
@@ -1711,7 +1981,7 @@ Expected: PASS (7 tests).
 - [ ] **Step 8: Commit**
 
 ```bash
-git add onderhoud/src/application onderhoud/test/support/fakes.ts onderhoud/test/application/instap-usecases.test.ts
+git add onderhoud/src/application onderhoud/test/support/fakes.ts onderhoud/test/application/instap-usecases.spec.ts
 git commit -m "feat(onderhoud): application-ports, fakes en instap-use-cases"
 ```
 
@@ -1719,7 +1989,7 @@ git commit -m "feat(onderhoud): application-ports, fakes en instap-use-cases"
 
 ### Task 10: Application — traject-use-cases, schema & contractaanvraag
 
-De rest van de use cases: traject sturen (`StartOnderhoud`/`RegistreerInspectie`/`RondOnderhoudAf`), factuurafhandeling, `MaakSchema` en `DienContractaanvraagIn`. Queries lopen in Fase 1 rechtstreeks via de repositories (net als bij Contract).
+De rest van de use cases: traject sturen (`StartOnderhoud`/`RegistreerInspectie`/`RondOnderhoudAf`), factuurafhandeling, `MaakSchema` en `DienContractaanvraagIn`. Queries lopen in Fase 1 rechtstreeks via de repositories. Ook deze use cases zijn plain klassen zonder decorators.
 
 **Files:**
 - Create: `onderhoud/src/application/onderhoud/start-onderhoud.ts`
@@ -1729,7 +1999,7 @@ De rest van de use cases: traject sturen (`StartOnderhoud`/`RegistreerInspectie`
 - Create: `onderhoud/src/application/onderhoud/keur-factuur-goed.ts`
 - Create: `onderhoud/src/application/schema/maak-schema.ts`
 - Create: `onderhoud/src/application/contractaanvraag/dien-contractaanvraag-in.ts`
-- Test: `onderhoud/test/application/traject-usecases.test.ts`
+- Test: `onderhoud/test/application/traject-usecases.spec.ts`
 
 **Interfaces:**
 - Consumes: aggregates (Tasks 6-8), repos (Task 8), ports + fakes (Task 9).
@@ -1744,18 +2014,17 @@ De rest van de use cases: traject sturen (`StartOnderhoud`/`RegistreerInspectie`
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/application/traject-usecases.test.ts`:
+`onderhoud/test/application/traject-usecases.spec.ts`:
 ```ts
-import { beforeEach, describe, expect, it } from 'vitest';
-import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose.js';
-import { StartOnderhoud } from '../../src/application/onderhoud/start-onderhoud.js';
-import { RegistreerInspectie } from '../../src/application/onderhoud/registreer-inspectie.js';
-import { RondOnderhoudAf } from '../../src/application/onderhoud/rond-onderhoud-af.js';
-import { OntvangFactuur } from '../../src/application/onderhoud/ontvang-factuur.js';
-import { KeurFactuurGoed } from '../../src/application/onderhoud/keur-factuur-goed.js';
-import { MaakSchema } from '../../src/application/schema/maak-schema.js';
-import { DienContractaanvraagIn } from '../../src/application/contractaanvraag/dien-contractaanvraag-in.js';
-import { MeldStoring } from '../../src/application/storing/meld-storing.js';
+import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose';
+import { StartOnderhoud } from '../../src/application/onderhoud/start-onderhoud';
+import { RegistreerInspectie } from '../../src/application/onderhoud/registreer-inspectie';
+import { RondOnderhoudAf } from '../../src/application/onderhoud/rond-onderhoud-af';
+import { OntvangFactuur } from '../../src/application/onderhoud/ontvang-factuur';
+import { KeurFactuurGoed } from '../../src/application/onderhoud/keur-factuur-goed';
+import { MaakSchema } from '../../src/application/schema/maak-schema';
+import { DienContractaanvraagIn } from '../../src/application/contractaanvraag/dien-contractaanvraag-in';
+import { MeldStoring } from '../../src/application/storing/meld-storing';
 import {
   FakeContractenReadModel,
   FakeEventPublisher,
@@ -1764,7 +2033,7 @@ import {
   InMemorySchemaRepository,
   InMemoryStoringRepository,
   VasteIdGenerator,
-} from '../support/fakes.js';
+} from '../support/fakes';
 
 describe('traject-use-cases', () => {
   let storingen: InMemoryStoringRepository;
@@ -1872,10 +2141,10 @@ Expected: FAIL — use cases ontbreken.
 
 `onderhoud/src/application/onderhoud/start-onderhoud.ts`:
 ```ts
-import { ContractId, OnderhoudId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { OnderhoudRepository } from '../../domain/repositories.js';
-import type { ContractenReadModel, EventPublisher } from '../ports.js';
+import { ContractId, OnderhoudId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { OnderhoudRepository } from '../../domain/repositories';
+import type { ContractenReadModel, EventPublisher } from '../ports';
 
 export interface StartOnderhoudCommand {
   onderhoudId: string;
@@ -1912,11 +2181,11 @@ export class StartOnderhoud {
 
 `onderhoud/src/application/onderhoud/registreer-inspectie.ts`:
 ```ts
-import { InspectieId, OnderhoudId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { InspectieOordeel } from '../../domain/onderhoud/onderhoud.js';
-import type { OnderhoudRepository } from '../../domain/repositories.js';
-import type { IdGenerator } from '../ports.js';
+import { InspectieId, OnderhoudId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { InspectieOordeel } from '../../domain/onderhoud/onderhoud';
+import type { OnderhoudRepository } from '../../domain/repositories';
+import type { IdGenerator } from '../ports';
 
 export interface RegistreerInspectieCommand {
   onderhoudId: string;
@@ -1947,10 +2216,10 @@ export class RegistreerInspectie {
 
 `onderhoud/src/application/onderhoud/rond-onderhoud-af.ts`:
 ```ts
-import { OnderhoudId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { OnderhoudRepository, StoringRepository } from '../../domain/repositories.js';
-import type { EventPublisher } from '../ports.js';
+import { OnderhoudId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { OnderhoudRepository, StoringRepository } from '../../domain/repositories';
+import type { EventPublisher } from '../ports';
 
 export interface RondOnderhoudAfCommand {
   onderhoudId: string;
@@ -1987,10 +2256,10 @@ export class RondOnderhoudAf {
 
 `onderhoud/src/application/onderhoud/ontvang-factuur.ts`:
 ```ts
-import { Bedrag, FactuurId, OnderhoudId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { OnderhoudRepository } from '../../domain/repositories.js';
-import type { IdGenerator } from '../ports.js';
+import { Bedrag, FactuurId, OnderhoudId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { OnderhoudRepository } from '../../domain/repositories';
+import type { IdGenerator } from '../ports';
 
 export interface OntvangFactuurCommand {
   onderhoudId: string;
@@ -2017,9 +2286,9 @@ export class OntvangFactuur {
 
 `onderhoud/src/application/onderhoud/keur-factuur-goed.ts`:
 ```ts
-import { FactuurId, OnderhoudId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { OnderhoudRepository } from '../../domain/repositories.js';
+import { FactuurId, OnderhoudId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { OnderhoudRepository } from '../../domain/repositories';
 
 export interface KeurFactuurGoedCommand {
   onderhoudId: string;
@@ -2042,11 +2311,11 @@ export class KeurFactuurGoed {
 
 `onderhoud/src/application/schema/maak-schema.ts`:
 ```ts
-import { OnderhoudsSchema } from '../../domain/schema/onderhouds-schema.js';
-import { ContractId, KunstwerkId, Periode, SchemaId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { SchemaRepository } from '../../domain/repositories.js';
-import type { ContractenReadModel, IdGenerator } from '../ports.js';
+import { OnderhoudsSchema } from '../../domain/schema/onderhouds-schema';
+import { ContractId, KunstwerkId, Periode, SchemaId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { SchemaRepository } from '../../domain/repositories';
+import type { ContractenReadModel, IdGenerator } from '../ports';
 
 export interface MaakSchemaCommand {
   kunstwerkId: string;
@@ -2087,9 +2356,9 @@ export class MaakSchema {
 
 `onderhoud/src/application/contractaanvraag/dien-contractaanvraag-in.ts`:
 ```ts
-import { KunstwerkId } from '../../domain/gedeeld/waarden.js';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
-import type { EventPublisher } from '../ports.js';
+import { KunstwerkId } from '../../domain/gedeeld/waarden';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import type { EventPublisher } from '../ports';
 
 export interface DienContractaanvraagInCommand {
   kunstwerkId: string;
@@ -2120,115 +2389,228 @@ Expected: PASS (8 tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add onderhoud/src/application onderhoud/test/application/traject-usecases.test.ts
+git add onderhoud/src/application onderhoud/test/application/traject-usecases.spec.ts
 git commit -m "feat(onderhoud): traject-, schema- en contractaanvraag-use-cases"
 ```
 
 ---
 
-### Task 11: Infrastructure — Prisma-domeintabellen + repo-implementaties
+### Task 11: Infrastructure — TypeORM-domein-entities, mappers + repo-implementaties
 
-Persistente opslag voor de drie aggregates. Repos vertalen tussen Prisma-rijen en domeinobjecten via de `herstel`-fabrieken; domeinobjecten blijven Prisma-vrij.
+Persistente opslag voor de drie aggregates. Pure mappers vertalen tussen entity en domeinobject (los getest, zonder DB); de repo-klassen (`@Injectable`, `@InjectRepository`) doen de I/O. Domeinobjecten blijven TypeORM-vrij dankzij de `herstel`-fabrieken.
 
 **Files:**
-- Modify: `onderhoud/prisma/schema.prisma` (domeintabellen toevoegen)
-- Create: `onderhoud/src/infrastructure/db/prisma-storing-repository.ts`
-- Create: `onderhoud/src/infrastructure/db/prisma-onderhoud-repository.ts`
-- Create: `onderhoud/src/infrastructure/db/prisma-schema-repository.ts`
-- Test: `onderhoud/test/infrastructure/prisma-mapping.test.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/storing.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/onderhoud.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/inspectie.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/factuur.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/entities/onderhouds-schema.entity.ts`
+- Create: `onderhoud/src/infrastructure/db/typeorm-storing-repository.ts`
+- Create: `onderhoud/src/infrastructure/db/typeorm-onderhoud-repository.ts`
+- Create: `onderhoud/src/infrastructure/db/typeorm-schema-repository.ts`
+- Test: `onderhoud/test/infrastructure/typeorm-mapping.spec.ts`
 
 **Interfaces:**
-- Consumes: repository-interfaces (Task 8), aggregates (Tasks 6-8), `maakPrismaClient` (Task 2).
-- Produces: `PrismaStoringRepository`, `PrismaOnderhoudRepository`, `PrismaSchemaRepository` (implementeren de domain-interfaces) plus pure mappers `storingNaarRij`/`rijNaarStoring`, `onderhoudNaarRij`/`rijNaarOnderhoud`, `schemaNaarRij`/`rijNaarSchema` (los getest, zonder DB).
+- Consumes: repository-interfaces (Task 8), aggregates (Tasks 6-8).
+- Produces: entities `StoringEntity`, `OnderhoudEntity`, `InspectieEntity`, `FactuurEntity`, `OnderhoudsSchemaEntity`.
+- Produces: `TypeOrmStoringRepository`, `TypeOrmOnderhoudRepository`, `TypeOrmSchemaRepository` (implementeren de domain-interfaces) plus pure mappers `storingNaarEntity`/`entityNaarStoring`, `onderhoudNaarEntity`/`entityNaarOnderhoud`, `schemaNaarEntity`/`entityNaarSchema`.
 
-- [ ] **Step 1: Domeintabellen toevoegen aan `schema.prisma`**
+- [ ] **Step 1: Domein-entities**
 
-Voeg toe onder de bestaande modellen in `onderhoud/prisma/schema.prisma`:
-```prisma
-model Storing {
-  storingId    String  @id
-  kunstwerkId  String
-  omschrijving String
-  ernst        String
-  status       String
-  onderhoudId  String?
+`onderhoud/src/infrastructure/db/entities/storing.entity.ts`:
+```ts
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
-  @@index([kunstwerkId])
-}
+@Entity({ name: 'storing' })
+export class StoringEntity {
+  @PrimaryColumn()
+  storingId: string;
 
-model Onderhoud {
-  onderhoudId    String      @id
-  kunstwerkId    String
-  status         String
-  aanleidingSoort String
-  storingId      String?
-  incidentId     String?
-  bevinding      String?
-  ernst          String?
-  contractId     String?
-  aannemerId     String?
-  gestartOp      DateTime?
-  afgerondOp     DateTime?
-  resultaat      String?
-  inspecties     Inspectie[]
-  facturen       Factuur[]
+  @Index()
+  @Column()
+  kunstwerkId: string;
 
-  @@index([kunstwerkId])
-}
+  @Column()
+  omschrijving: string;
 
-model Inspectie {
-  inspectieId String    @id
-  onderhoudId String
-  datum       DateTime
-  oordeel     String
-  opmerkingen String?
-  onderhoud   Onderhoud @relation(fields: [onderhoudId], references: [onderhoudId])
-}
+  @Column()
+  ernst: string;
 
-model Factuur {
-  factuurId    String    @id
-  onderhoudId  String
-  bedragCenten Int
-  valuta       String    @default("EUR")
-  status       String
-  ontvangenOp  DateTime
-  onderhoud    Onderhoud @relation(fields: [onderhoudId], references: [onderhoudId])
-}
+  @Column()
+  status: string;
 
-model OnderhoudsSchema {
-  schemaId      String   @id
-  kunstwerkId   String
-  contractId    String
-  aannemer      String
-  periodeStart  DateTime
-  periodeEind   DateTime
-  momenten      Json
-
-  @@index([kunstwerkId])
+  @Column({ type: 'text', nullable: true })
+  onderhoudId: string | null;
 }
 ```
 
-Run (in `onderhoud/`): `DATABASE_URL=postgres://rws:rws@localhost:5432/onderhoud_db npx prisma migrate dev --name domeintabellen`
-Expected: migratie aangemaakt; `npx prisma generate` draait mee.
-
-- [ ] **Step 2: Write the failing test (pure mappers)**
-
-`onderhoud/test/infrastructure/prisma-mapping.test.ts`:
+`onderhoud/src/infrastructure/db/entities/inspectie.entity.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { rijNaarStoring, storingNaarRij } from '../../src/infrastructure/db/prisma-storing-repository.js';
-import { onderhoudNaarRij, rijNaarOnderhoud } from '../../src/infrastructure/db/prisma-onderhoud-repository.js';
-import { rijNaarSchema, schemaNaarRij } from '../../src/infrastructure/db/prisma-schema-repository.js';
-import { Storing } from '../../src/domain/storing/storing.js';
-import { Onderhoud } from '../../src/domain/onderhoud/onderhoud.js';
-import { OnderhoudsSchema } from '../../src/domain/schema/onderhouds-schema.js';
-import { Bedrag, ContractId, FactuurId, InspectieId, KunstwerkId, OnderhoudId, Periode, SchemaId, StoringId } from '../../src/domain/gedeeld/waarden.js';
+import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import { OnderhoudEntity } from './onderhoud.entity';
 
-describe('prisma-mapping', () => {
+@Entity({ name: 'inspectie' })
+export class InspectieEntity {
+  @PrimaryColumn()
+  inspectieId: string;
+
+  @Column()
+  onderhoudId: string;
+
+  @Column({ type: 'timestamptz' })
+  datum: Date;
+
+  @Column()
+  oordeel: string;
+
+  @Column({ type: 'text', nullable: true })
+  opmerkingen: string | null;
+
+  @ManyToOne(() => OnderhoudEntity, (o) => o.inspecties, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'onderhoudId' })
+  onderhoud: OnderhoudEntity;
+}
+```
+
+`onderhoud/src/infrastructure/db/entities/factuur.entity.ts`:
+```ts
+import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import { OnderhoudEntity } from './onderhoud.entity';
+
+@Entity({ name: 'factuur' })
+export class FactuurEntity {
+  @PrimaryColumn()
+  factuurId: string;
+
+  @Column()
+  onderhoudId: string;
+
+  @Column({ type: 'int' })
+  bedragCenten: number;
+
+  @Column({ default: 'EUR' })
+  valuta: string;
+
+  @Column()
+  status: string;
+
+  @Column({ type: 'timestamptz' })
+  ontvangenOp: Date;
+
+  @ManyToOne(() => OnderhoudEntity, (o) => o.facturen, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'onderhoudId' })
+  onderhoud: OnderhoudEntity;
+}
+```
+
+`onderhoud/src/infrastructure/db/entities/onderhoud.entity.ts`:
+```ts
+import { Column, Entity, Index, OneToMany, PrimaryColumn } from 'typeorm';
+import { InspectieEntity } from './inspectie.entity';
+import { FactuurEntity } from './factuur.entity';
+
+@Entity({ name: 'onderhoud' })
+export class OnderhoudEntity {
+  @PrimaryColumn()
+  onderhoudId: string;
+
+  @Index()
+  @Column()
+  kunstwerkId: string;
+
+  @Column()
+  status: string;
+
+  @Column()
+  aanleidingSoort: string;
+
+  @Column({ type: 'text', nullable: true })
+  storingId: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  incidentId: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  bevinding: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  ernst: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  contractId: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  aannemerId: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  gestartOp: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  afgerondOp: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  resultaat: string | null;
+
+  @OneToMany(() => InspectieEntity, (i) => i.onderhoud, { cascade: true, eager: true })
+  inspecties: InspectieEntity[];
+
+  @OneToMany(() => FactuurEntity, (f) => f.onderhoud, { cascade: true, eager: true })
+  facturen: FactuurEntity[];
+}
+```
+
+`onderhoud/src/infrastructure/db/entities/onderhouds-schema.entity.ts`:
+```ts
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+
+@Entity({ name: 'onderhouds_schema' })
+export class OnderhoudsSchemaEntity {
+  @PrimaryColumn()
+  schemaId: string;
+
+  @Index()
+  @Column()
+  kunstwerkId: string;
+
+  @Column()
+  contractId: string;
+
+  @Column()
+  aannemer: string;
+
+  @Column({ type: 'timestamptz' })
+  periodeStart: Date;
+
+  @Column({ type: 'timestamptz' })
+  periodeEind: Date;
+
+  @Column({ type: 'jsonb' })
+  momenten: Array<{ datum: string; omschrijving: string }>;
+}
+```
+
+- [ ] **Step 2: Migratie aanmaken**
+
+Run (in `onderhoud/`, met lokale `DATABASE_URL` op host `localhost`): `npm run migration:generate -- src/infrastructure/db/migrations/DomeinTabellen` en daarna `npm run migration:run`.
+Expected: migratie met de tabellen `storing`, `onderhoud`, `inspectie`, `factuur`, `onderhouds_schema` (incl. FK's op `onderhoud`). Controleer met `\dt` in psql of ze bestaan.
+
+- [ ] **Step 3: Write the failing test (pure mappers)**
+
+`onderhoud/test/infrastructure/typeorm-mapping.spec.ts`:
+```ts
+import { entityNaarStoring, storingNaarEntity } from '../../src/infrastructure/db/typeorm-storing-repository';
+import { entityNaarOnderhoud, onderhoudNaarEntity } from '../../src/infrastructure/db/typeorm-onderhoud-repository';
+import { entityNaarSchema, schemaNaarEntity } from '../../src/infrastructure/db/typeorm-schema-repository';
+import { Storing } from '../../src/domain/storing/storing';
+import { Onderhoud } from '../../src/domain/onderhoud/onderhoud';
+import { OnderhoudsSchema } from '../../src/domain/schema/onderhouds-schema';
+import { Bedrag, ContractId, FactuurId, InspectieId, KunstwerkId, OnderhoudId, Periode, SchemaId, StoringId } from '../../src/domain/gedeeld/waarden';
+
+describe('typeorm-mapping', () => {
   it('mapt een Storing heen en terug', () => {
     const storing = Storing.meld({ id: StoringId.van('S1'), kunstwerkId: KunstwerkId.van('KW1'), omschrijving: 'scheur', ernst: 'Hoog' });
     storing.koppelAanOnderhoud(OnderhoudId.van('O1'));
-    const terug = rijNaarStoring(storingNaarRij(storing));
+    const terug = entityNaarStoring(storingNaarEntity(storing));
     expect(terug.id.waarde).toBe('S1');
     expect(terug.status).toBe('InBehandeling');
     expect(terug.onderhoudId?.waarde).toBe('O1');
@@ -2240,7 +2622,7 @@ describe('prisma-mapping', () => {
     traject.start({ datum: new Date('2026-07-01'), contractId: ContractId.van('C1') });
     traject.registreerInspectie({ id: InspectieId.van('I1'), datum: new Date('2026-07-05'), oordeel: 'Goedgekeurd' });
     traject.ontvangFactuur({ id: FactuurId.van('F1'), bedrag: Bedrag.vanEuro(2500), ontvangenOp: new Date('2026-07-06') });
-    const terug = rijNaarOnderhoud(onderhoudNaarRij(traject));
+    const terug = entityNaarOnderhoud(onderhoudNaarEntity(traject));
     expect(terug.status).toBe('Gestart');
     expect(terug.aanleiding.soort).toBe('Diagnose');
     expect(terug.contractId?.waarde).toBe('C1');
@@ -2257,274 +2639,249 @@ describe('prisma-mapping', () => {
       periode: Periode.van(new Date('2026-01-01'), new Date('2026-12-31')),
       momenten: [{ datum: new Date('2026-03-01'), omschrijving: 'smeren' }],
     });
-    const terug = rijNaarSchema(schemaNaarRij(schema));
+    const terug = entityNaarSchema(schemaNaarEntity(schema));
     expect(terug.aannemer).toBe('BAM');
     expect(terug.momenten[0].omschrijving).toBe('smeren');
   });
 });
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Step 4: Run test to verify it fails**
 
-Run: `npm test -- prisma-mapping`
+Run: `npm test -- typeorm-mapping`
 Expected: FAIL — modules ontbreken.
 
-- [ ] **Step 4: Implementeer `prisma-storing-repository.ts`**
+- [ ] **Step 5: Implementeer `typeorm-storing-repository.ts`**
 
-`onderhoud/src/infrastructure/db/prisma-storing-repository.ts`:
+`onderhoud/src/infrastructure/db/typeorm-storing-repository.ts`:
 ```ts
-import type { PrismaClient } from '@prisma/client';
-import { Storing, type StoringStatus } from '../../domain/storing/storing.js';
-import { ernstVan, KunstwerkId, OnderhoudId, StoringId } from '../../domain/gedeeld/waarden.js';
-import type { StoringRepository } from '../../domain/repositories.js';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { StoringEntity } from './entities/storing.entity';
+import { Storing, type StoringStatus } from '../../domain/storing/storing';
+import { ernstVan, KunstwerkId, OnderhoudId, StoringId } from '../../domain/gedeeld/waarden';
+import type { StoringRepository } from '../../domain/repositories';
 
-export interface StoringRij {
-  storingId: string;
-  kunstwerkId: string;
-  omschrijving: string;
-  ernst: string;
-  status: string;
-  onderhoudId: string | null;
+export function storingNaarEntity(s: Storing): StoringEntity {
+  const e = new StoringEntity();
+  e.storingId = s.id.waarde;
+  e.kunstwerkId = s.kunstwerkId.waarde;
+  e.omschrijving = s.omschrijving;
+  e.ernst = s.ernst;
+  e.status = s.status;
+  e.onderhoudId = s.onderhoudId?.waarde ?? null;
+  return e;
 }
 
-export function storingNaarRij(s: Storing): StoringRij {
-  return {
-    storingId: s.id.waarde,
-    kunstwerkId: s.kunstwerkId.waarde,
-    omschrijving: s.omschrijving,
-    ernst: s.ernst,
-    status: s.status,
-    onderhoudId: s.onderhoudId?.waarde ?? null,
-  };
-}
-
-export function rijNaarStoring(rij: StoringRij): Storing {
+export function entityNaarStoring(e: StoringEntity): Storing {
   return Storing.herstel({
-    id: StoringId.van(rij.storingId),
-    kunstwerkId: KunstwerkId.van(rij.kunstwerkId),
-    omschrijving: rij.omschrijving,
-    ernst: ernstVan(rij.ernst),
-    status: rij.status as StoringStatus,
-    onderhoudId: rij.onderhoudId ? OnderhoudId.van(rij.onderhoudId) : undefined,
+    id: StoringId.van(e.storingId),
+    kunstwerkId: KunstwerkId.van(e.kunstwerkId),
+    omschrijving: e.omschrijving,
+    ernst: ernstVan(e.ernst),
+    status: e.status as StoringStatus,
+    onderhoudId: e.onderhoudId ? OnderhoudId.van(e.onderhoudId) : undefined,
   });
 }
 
-export class PrismaStoringRepository implements StoringRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+@Injectable()
+export class TypeOrmStoringRepository implements StoringRepository {
+  constructor(@InjectRepository(StoringEntity) private readonly repo: Repository<StoringEntity>) {}
 
   async bewaar(s: Storing): Promise<void> {
-    const rij = storingNaarRij(s);
-    await this.prisma.storing.upsert({ where: { storingId: rij.storingId }, create: rij, update: rij });
+    await this.repo.save(storingNaarEntity(s));
   }
 
   async zoek(id: StoringId): Promise<Storing | null> {
-    const rij = await this.prisma.storing.findUnique({ where: { storingId: id.waarde } });
-    return rij ? rijNaarStoring(rij) : null;
+    const e = await this.repo.findOne({ where: { storingId: id.waarde } });
+    return e ? entityNaarStoring(e) : null;
   }
 
   async zoekAlle(): Promise<Storing[]> {
-    return (await this.prisma.storing.findMany()).map(rijNaarStoring);
+    return (await this.repo.find()).map(entityNaarStoring);
   }
 }
 ```
 
-- [ ] **Step 5: Implementeer `prisma-onderhoud-repository.ts`**
+- [ ] **Step 6: Implementeer `typeorm-onderhoud-repository.ts`**
 
-`onderhoud/src/infrastructure/db/prisma-onderhoud-repository.ts`:
+`onderhoud/src/infrastructure/db/typeorm-onderhoud-repository.ts`:
 ```ts
-import type { PrismaClient } from '@prisma/client';
-import { Onderhoud, type Aanleiding, type FactuurStatus, type InspectieOordeel, type OnderhoudStatus } from '../../domain/onderhoud/onderhoud.js';
-import { Bedrag, ContractId, ernstVan, FactuurId, IncidentId, InspectieId, KunstwerkId, OnderhoudId, StoringId, type AannemerId } from '../../domain/gedeeld/waarden.js';
-import { AannemerId as AannemerIdKlasse } from '../../domain/gedeeld/waarden.js';
-import type { OnderhoudRepository } from '../../domain/repositories.js';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { OnderhoudEntity } from './entities/onderhoud.entity';
+import { InspectieEntity } from './entities/inspectie.entity';
+import { FactuurEntity } from './entities/factuur.entity';
+import { Onderhoud, type Aanleiding, type FactuurStatus, type InspectieOordeel, type OnderhoudStatus } from '../../domain/onderhoud/onderhoud';
+import { AannemerId, Bedrag, ContractId, ernstVan, FactuurId, IncidentId, InspectieId, KunstwerkId, OnderhoudId, StoringId } from '../../domain/gedeeld/waarden';
+import type { OnderhoudRepository } from '../../domain/repositories';
 
-export interface OnderhoudRij {
-  onderhoudId: string;
-  kunstwerkId: string;
-  status: string;
-  aanleidingSoort: string;
-  storingId: string | null;
-  incidentId: string | null;
-  bevinding: string | null;
-  ernst: string | null;
-  contractId: string | null;
-  aannemerId: string | null;
-  gestartOp: Date | null;
-  afgerondOp: Date | null;
-  resultaat: string | null;
-  inspecties: Array<{ inspectieId: string; datum: Date; oordeel: string; opmerkingen: string | null }>;
-  facturen: Array<{ factuurId: string; bedragCenten: number; valuta: string; status: string; ontvangenOp: Date }>;
-}
-
-export function onderhoudNaarRij(o: Onderhoud): OnderhoudRij {
+export function onderhoudNaarEntity(o: Onderhoud): OnderhoudEntity {
+  const e = new OnderhoudEntity();
+  e.onderhoudId = o.id.waarde;
+  e.kunstwerkId = o.kunstwerkId.waarde;
+  e.status = o.status;
   const aanleiding = o.aanleiding;
-  return {
-    onderhoudId: o.id.waarde,
-    kunstwerkId: o.kunstwerkId.waarde,
-    status: o.status,
-    aanleidingSoort: aanleiding.soort,
-    storingId: aanleiding.soort === 'Storing' ? aanleiding.storingId.waarde : null,
-    incidentId: aanleiding.soort === 'Diagnose' ? aanleiding.diagnose.incidentId?.waarde ?? null : null,
-    bevinding: aanleiding.soort === 'Diagnose' ? aanleiding.diagnose.bevinding : null,
-    ernst: aanleiding.soort === 'Diagnose' ? aanleiding.diagnose.ernst : null,
-    contractId: o.contractId?.waarde ?? null,
-    aannemerId: o.aannemerId?.waarde ?? null,
-    gestartOp: o.gestartOp ?? null,
-    afgerondOp: o.afgerondOp ?? null,
-    resultaat: o.resultaat ?? null,
-    inspecties: o.inspecties.map((i) => ({ inspectieId: i.id.waarde, datum: i.datum, oordeel: i.oordeel, opmerkingen: i.opmerkingen ?? null })),
-    facturen: o.facturen.map((f) => ({ factuurId: f.id.waarde, bedragCenten: f.bedrag.centen, valuta: f.bedrag.valuta, status: f.status, ontvangenOp: f.ontvangenOp })),
-  };
+  e.aanleidingSoort = aanleiding.soort;
+  e.storingId = aanleiding.soort === 'Storing' ? aanleiding.storingId.waarde : null;
+  e.incidentId = aanleiding.soort === 'Diagnose' ? aanleiding.diagnose.incidentId?.waarde ?? null : null;
+  e.bevinding = aanleiding.soort === 'Diagnose' ? aanleiding.diagnose.bevinding : null;
+  e.ernst = aanleiding.soort === 'Diagnose' ? aanleiding.diagnose.ernst : null;
+  e.contractId = o.contractId?.waarde ?? null;
+  e.aannemerId = o.aannemerId?.waarde ?? null;
+  e.gestartOp = o.gestartOp ?? null;
+  e.afgerondOp = o.afgerondOp ?? null;
+  e.resultaat = o.resultaat ?? null;
+  e.inspecties = o.inspecties.map((i) => {
+    const ie = new InspectieEntity();
+    ie.inspectieId = i.id.waarde;
+    ie.onderhoudId = o.id.waarde;
+    ie.datum = i.datum;
+    ie.oordeel = i.oordeel;
+    ie.opmerkingen = i.opmerkingen ?? null;
+    return ie;
+  });
+  e.facturen = o.facturen.map((f) => {
+    const fe = new FactuurEntity();
+    fe.factuurId = f.id.waarde;
+    fe.onderhoudId = o.id.waarde;
+    fe.bedragCenten = f.bedrag.centen;
+    fe.valuta = f.bedrag.valuta;
+    fe.status = f.status;
+    fe.ontvangenOp = f.ontvangenOp;
+    return fe;
+  });
+  return e;
 }
 
-export function rijNaarOnderhoud(rij: OnderhoudRij): Onderhoud {
+export function entityNaarOnderhoud(e: OnderhoudEntity): Onderhoud {
   const aanleiding: Aanleiding =
-    rij.aanleidingSoort === 'Storing'
-      ? { soort: 'Storing', storingId: StoringId.van(rij.storingId ?? '') }
+    e.aanleidingSoort === 'Storing'
+      ? { soort: 'Storing', storingId: StoringId.van(e.storingId ?? '') }
       : {
           soort: 'Diagnose',
           diagnose: {
-            incidentId: rij.incidentId ? IncidentId.van(rij.incidentId) : undefined,
-            bevinding: rij.bevinding ?? '',
-            ernst: ernstVan(rij.ernst ?? 'Laag'),
+            incidentId: e.incidentId ? IncidentId.van(e.incidentId) : undefined,
+            bevinding: e.bevinding ?? '',
+            ernst: ernstVan(e.ernst ?? 'Laag'),
           },
         };
   return Onderhoud.herstel({
-    id: OnderhoudId.van(rij.onderhoudId),
-    kunstwerkId: KunstwerkId.van(rij.kunstwerkId),
+    id: OnderhoudId.van(e.onderhoudId),
+    kunstwerkId: KunstwerkId.van(e.kunstwerkId),
     aanleiding,
-    status: rij.status as OnderhoudStatus,
-    contractId: rij.contractId ? ContractId.van(rij.contractId) : undefined,
-    aannemerId: rij.aannemerId ? (AannemerIdKlasse.van(rij.aannemerId) as AannemerId) : undefined,
-    gestartOp: rij.gestartOp ?? undefined,
-    afgerondOp: rij.afgerondOp ?? undefined,
-    resultaat: rij.resultaat ?? undefined,
-    inspecties: rij.inspecties.map((i) => ({ id: InspectieId.van(i.inspectieId), datum: i.datum, oordeel: i.oordeel as InspectieOordeel, opmerkingen: i.opmerkingen ?? undefined })),
-    facturen: rij.facturen.map((f) => ({ id: FactuurId.van(f.factuurId), bedrag: Bedrag.vanCenten(f.bedragCenten, f.valuta), status: f.status as FactuurStatus, ontvangenOp: f.ontvangenOp })),
+    status: e.status as OnderhoudStatus,
+    contractId: e.contractId ? ContractId.van(e.contractId) : undefined,
+    aannemerId: e.aannemerId ? AannemerId.van(e.aannemerId) : undefined,
+    gestartOp: e.gestartOp ?? undefined,
+    afgerondOp: e.afgerondOp ?? undefined,
+    resultaat: e.resultaat ?? undefined,
+    inspecties: (e.inspecties ?? []).map((i) => ({
+      id: InspectieId.van(i.inspectieId),
+      datum: i.datum,
+      oordeel: i.oordeel as InspectieOordeel,
+      opmerkingen: i.opmerkingen ?? undefined,
+    })),
+    facturen: (e.facturen ?? []).map((f) => ({
+      id: FactuurId.van(f.factuurId),
+      bedrag: Bedrag.vanCenten(f.bedragCenten, f.valuta),
+      status: f.status as FactuurStatus,
+      ontvangenOp: f.ontvangenOp,
+    })),
   });
 }
 
-export class PrismaOnderhoudRepository implements OnderhoudRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+@Injectable()
+export class TypeOrmOnderhoudRepository implements OnderhoudRepository {
+  constructor(@InjectRepository(OnderhoudEntity) private readonly repo: Repository<OnderhoudEntity>) {}
 
   async bewaar(o: Onderhoud): Promise<void> {
-    const rij = onderhoudNaarRij(o);
-    const { inspecties, facturen, ...kop } = rij;
-    await this.prisma.$transaction([
-      this.prisma.onderhoud.upsert({ where: { onderhoudId: kop.onderhoudId }, create: kop, update: kop }),
-      ...inspecties.map((i) =>
-        this.prisma.inspectie.upsert({
-          where: { inspectieId: i.inspectieId },
-          create: { ...i, onderhoudId: kop.onderhoudId },
-          update: { ...i, onderhoudId: kop.onderhoudId },
-        }),
-      ),
-      ...facturen.map((f) =>
-        this.prisma.factuur.upsert({
-          where: { factuurId: f.factuurId },
-          create: { ...f, onderhoudId: kop.onderhoudId },
-          update: { ...f, onderhoudId: kop.onderhoudId },
-        }),
-      ),
-    ]);
+    await this.repo.save(onderhoudNaarEntity(o));
   }
 
   async zoek(id: OnderhoudId): Promise<Onderhoud | null> {
-    const rij = await this.prisma.onderhoud.findUnique({
-      where: { onderhoudId: id.waarde },
-      include: { inspecties: true, facturen: true },
-    });
-    return rij ? rijNaarOnderhoud(rij) : null;
+    const e = await this.repo.findOne({ where: { onderhoudId: id.waarde } });
+    return e ? entityNaarOnderhoud(e) : null;
   }
 
   async zoekAlle(): Promise<Onderhoud[]> {
-    const rijen = await this.prisma.onderhoud.findMany({ include: { inspecties: true, facturen: true } });
-    return rijen.map(rijNaarOnderhoud);
+    return (await this.repo.find()).map(entityNaarOnderhoud);
   }
 
   async zoekPerKunstwerk(kunstwerkId: KunstwerkId): Promise<Onderhoud[]> {
-    const rijen = await this.prisma.onderhoud.findMany({
-      where: { kunstwerkId: kunstwerkId.waarde },
-      include: { inspecties: true, facturen: true },
-    });
-    return rijen.map(rijNaarOnderhoud);
+    return (await this.repo.find({ where: { kunstwerkId: kunstwerkId.waarde } })).map(entityNaarOnderhoud);
   }
 }
 ```
 
-- [ ] **Step 6: Implementeer `prisma-schema-repository.ts`**
+> `inspecties`/`facturen` staan op `eager: true` + `cascade: true`, dus `find`/`findOne` laadt ze mee en `save` persisteert ze in één keer. In Fase 1 worden ze alleen toegevoegd, nooit verwijderd; orphan-removal is daarom niet nodig.
 
-`onderhoud/src/infrastructure/db/prisma-schema-repository.ts`:
+- [ ] **Step 7: Implementeer `typeorm-schema-repository.ts`**
+
+`onderhoud/src/infrastructure/db/typeorm-schema-repository.ts`:
 ```ts
-import type { PrismaClient } from '@prisma/client';
-import { OnderhoudsSchema } from '../../domain/schema/onderhouds-schema.js';
-import { ContractId, KunstwerkId, Periode, SchemaId } from '../../domain/gedeeld/waarden.js';
-import type { SchemaRepository } from '../../domain/repositories.js';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { OnderhoudsSchemaEntity } from './entities/onderhouds-schema.entity';
+import { OnderhoudsSchema } from '../../domain/schema/onderhouds-schema';
+import { ContractId, KunstwerkId, Periode, SchemaId } from '../../domain/gedeeld/waarden';
+import type { SchemaRepository } from '../../domain/repositories';
 
-export interface SchemaRij {
-  schemaId: string;
-  kunstwerkId: string;
-  contractId: string;
-  aannemer: string;
-  periodeStart: Date;
-  periodeEind: Date;
-  momenten: Array<{ datum: string; omschrijving: string }>;
+export function schemaNaarEntity(s: OnderhoudsSchema): OnderhoudsSchemaEntity {
+  const e = new OnderhoudsSchemaEntity();
+  e.schemaId = s.id.waarde;
+  e.kunstwerkId = s.kunstwerkId.waarde;
+  e.contractId = s.contractId.waarde;
+  e.aannemer = s.aannemer;
+  e.periodeStart = s.periode.start;
+  e.periodeEind = s.periode.eind;
+  e.momenten = s.momenten.map((m) => ({ datum: m.datum.toISOString(), omschrijving: m.omschrijving }));
+  return e;
 }
 
-export function schemaNaarRij(s: OnderhoudsSchema): SchemaRij {
-  return {
-    schemaId: s.id.waarde,
-    kunstwerkId: s.kunstwerkId.waarde,
-    contractId: s.contractId.waarde,
-    aannemer: s.aannemer,
-    periodeStart: s.periode.start,
-    periodeEind: s.periode.eind,
-    momenten: s.momenten.map((m) => ({ datum: m.datum.toISOString(), omschrijving: m.omschrijving })),
-  };
-}
-
-export function rijNaarSchema(rij: SchemaRij): OnderhoudsSchema {
+export function entityNaarSchema(e: OnderhoudsSchemaEntity): OnderhoudsSchema {
   return OnderhoudsSchema.herstel({
-    id: SchemaId.van(rij.schemaId),
-    kunstwerkId: KunstwerkId.van(rij.kunstwerkId),
-    contractId: ContractId.van(rij.contractId),
-    aannemer: rij.aannemer,
-    periode: Periode.van(rij.periodeStart, rij.periodeEind),
-    momenten: rij.momenten.map((m) => ({ datum: new Date(m.datum), omschrijving: m.omschrijving })),
+    id: SchemaId.van(e.schemaId),
+    kunstwerkId: KunstwerkId.van(e.kunstwerkId),
+    contractId: ContractId.van(e.contractId),
+    aannemer: e.aannemer,
+    periode: Periode.van(new Date(e.periodeStart), new Date(e.periodeEind)),
+    momenten: e.momenten.map((m) => ({ datum: new Date(m.datum), omschrijving: m.omschrijving })),
   });
 }
 
-export class PrismaSchemaRepository implements SchemaRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+@Injectable()
+export class TypeOrmSchemaRepository implements SchemaRepository {
+  constructor(@InjectRepository(OnderhoudsSchemaEntity) private readonly repo: Repository<OnderhoudsSchemaEntity>) {}
 
   async bewaar(s: OnderhoudsSchema): Promise<void> {
-    const rij = schemaNaarRij(s);
-    const data = { ...rij, momenten: rij.momenten as unknown as object };
-    await this.prisma.onderhoudsSchema.upsert({ where: { schemaId: rij.schemaId }, create: data, update: data });
+    await this.repo.save(schemaNaarEntity(s));
   }
 
   async zoek(id: SchemaId): Promise<OnderhoudsSchema | null> {
-    const rij = await this.prisma.onderhoudsSchema.findUnique({ where: { schemaId: id.waarde } });
-    return rij ? rijNaarSchema({ ...rij, momenten: rij.momenten as SchemaRij['momenten'] }) : null;
+    const e = await this.repo.findOne({ where: { schemaId: id.waarde } });
+    return e ? entityNaarSchema(e) : null;
   }
 
   async zoekAlle(): Promise<OnderhoudsSchema[]> {
-    const rijen = await this.prisma.onderhoudsSchema.findMany();
-    return rijen.map((rij) => rijNaarSchema({ ...rij, momenten: rij.momenten as SchemaRij['momenten'] }));
+    return (await this.repo.find()).map(entityNaarSchema);
   }
 }
 ```
 
-- [ ] **Step 7: Run test to verify it passes**
+- [ ] **Step 8: Run test to verify it passes**
 
-Run: `npm test -- prisma-mapping`
+Run: `npm test -- typeorm-mapping`
 Expected: PASS (3 tests).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add onderhoud/prisma onderhoud/src/infrastructure/db onderhoud/test/infrastructure/prisma-mapping.test.ts
-git commit -m "feat(onderhoud): Prisma-domeintabellen en repo-implementaties"
+git add onderhoud/src/infrastructure/db onderhoud/test/infrastructure/typeorm-mapping.spec.ts
+git commit -m "feat(onderhoud): TypeORM-domein-entities, mappers en repo-implementaties"
 ```
 
 ---
@@ -2533,18 +2890,17 @@ git commit -m "feat(onderhoud): Prisma-domeintabellen en repo-implementaties"
 
 **Files:**
 - Create: `onderhoud/src/infrastructure/messaging/rabbitmq-event-publisher.ts`
-- Test: `onderhoud/test/infrastructure/rabbitmq-event-publisher.test.ts`
+- Test: `onderhoud/test/infrastructure/rabbitmq-event-publisher.spec.ts`
 
 **Interfaces:**
 - Consumes: `EventPublisher` (Task 9), `OnderhoudDomainEvent` (Task 5), `RWS_EXCHANGE` (Task 3).
-- Produces: `class RabbitMqEventPublisher implements EventPublisher` — constructor `(kanaal: KanaalPublish, idGenerator?: () => string, klok?: () => Date)`, waarbij `interface KanaalPublish { publish(exchange: string, routingKey: string, content: Buffer, opties?: { persistent?: boolean }): boolean }`.
+- Produces: `class RabbitMqEventPublisher implements EventPublisher` — constructor `(kanaal: KanaalPublish, idGenerator?: () => string, klok?: () => Date)`, met `interface KanaalPublish { publish(exchange: string, routingKey: string, content: Buffer, opties?: { persistent?: boolean }): boolean }`. Framework-vrij; de Nest-provider (Task 17) levert de `kanaal` uit de connectie.
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/infrastructure/rabbitmq-event-publisher.test.ts`:
+`onderhoud/test/infrastructure/rabbitmq-event-publisher.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { RabbitMqEventPublisher, type KanaalPublish } from '../../src/infrastructure/messaging/rabbitmq-event-publisher.js';
+import { RabbitMqEventPublisher, type KanaalPublish } from '../../src/infrastructure/messaging/rabbitmq-event-publisher';
 
 describe('RabbitMqEventPublisher', () => {
   it('verpakt een domain event in de vaste envelope en publiceert op rws.events', async () => {
@@ -2586,9 +2942,9 @@ Expected: FAIL — module ontbreekt.
 `onderhoud/src/infrastructure/messaging/rabbitmq-event-publisher.ts`:
 ```ts
 import { v4 as uuid } from 'uuid';
-import type { EventPublisher } from '../../application/ports.js';
-import type { OnderhoudDomainEvent } from '../../domain/gedeeld/domain-events.js';
-import { RWS_EXCHANGE } from './rabbitmq-connectie.js';
+import type { EventPublisher } from '../../application/ports';
+import type { OnderhoudDomainEvent } from '../../domain/gedeeld/domain-events';
+import { RWS_EXCHANGE } from './rabbitmq-connectie';
 
 export interface KanaalPublish {
   publish(exchange: string, routingKey: string, content: Buffer, opties?: { persistent?: boolean }): boolean;
@@ -2625,7 +2981,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add onderhoud/src/infrastructure/messaging/rabbitmq-event-publisher.ts onderhoud/test/infrastructure/rabbitmq-event-publisher.test.ts
+git add onderhoud/src/infrastructure/messaging/rabbitmq-event-publisher.ts onderhoud/test/infrastructure/rabbitmq-event-publisher.spec.ts
 git commit -m "feat(onderhoud): RabbitMQ EventPublisher met vaste envelope"
 ```
 
@@ -2633,36 +2989,32 @@ git commit -m "feat(onderhoud): RabbitMQ EventPublisher met vaste envelope"
 
 ### Task 13: Infrastructure — idempotente consumers (Monitoring, Contract, Beheer) + read-models
 
-Drie consumers, elk met eigen durable queue op `rws.events`. Vertaling van envelope naar use-case/read-model gebeurt hier — de envelope komt niet voorbij deze laag. Dedupe op `eventId` via één gedeelde `PrismaEventDedup`.
+Drie consumers, elk met eigen durable queue op `rws.events`. Vertaling van envelope naar use-case/read-model gebeurt hier — de envelope komt niet voorbij deze laag. Dedupe op `eventId` via één gedeelde `TypeOrmEventDedup`. De verwerkers zijn framework-vrij (plain klassen, direct te testen); de bedrading naar de queues (`startConsumer`) en het opstarten (`OnModuleInit`) staan in Task 17.
 
 **Files:**
 - Create: `onderhoud/src/infrastructure/messaging/consumer-helpers.ts`
 - Create: `onderhoud/src/infrastructure/messaging/monitoring-incident-consumer.ts`
 - Create: `onderhoud/src/infrastructure/messaging/contract-consumer.ts`
 - Create: `onderhoud/src/infrastructure/messaging/beheer-consumer.ts`
-- Create: `onderhoud/src/infrastructure/db/prisma-read-models.ts`
-- Test: `onderhoud/test/infrastructure/consumers.test.ts`
+- Create: `onderhoud/src/infrastructure/db/typeorm-read-models.ts`
+- Test: `onderhoud/test/infrastructure/consumers.spec.ts`
 
 **Interfaces:**
-- Consumes: `StelDiagnose` (Task 9), `KunstwerkenReadModel`/`ContractenReadModel` (Task 9), `RabbitMqConnectie`/`RWS_EXCHANGE` (Task 3).
-- Produces (helpers): `interface Envelope { eventId: string; eventType: string; data: Record<string, unknown> }`, `interface EventDedup { isVerwerkt(eventId: string): Promise<boolean>; markeerVerwerkt(eventId: string): Promise<void> }`, `startConsumer(connectie: RabbitMqConnectie, queue: string, bindings: string[], verwerk: (env: Envelope) => Promise<void>): Promise<void>`.
-- Produces (verwerkers, elk idempotent via `EventDedup`):
-  - `class MonitoringIncidentVerwerker { constructor(stelDiagnose: StelDiagnose, dedup: EventDedup); verwerk(env: Envelope): Promise<void> }` — vertaalt `monitoring.incident.aangemaakt` (`incidentId`, `kunstwerkId`, `ernst`, `omschrijving`) naar `StelDiagnoseCommand`.
-  - `class ContractVerwerker { constructor(store: ContractStore, dedup: EventDedup); verwerk(env: Envelope): Promise<void> }` met `interface ContractStore { upsertGegund(p: { contractId: string; kunstwerkId: string; opdrachtnemer: string; looptijdStart: string | null; looptijdEind: string | null }): Promise<void>; markeerAfgerond(contractId: string): Promise<void> }`.
-  - `class BeheerVerwerker { constructor(store: BeheerStore, dedup: EventDedup); verwerk(env: Envelope): Promise<void> }` met `interface BeheerStore { upsertKunstwerk(kunstwerkId: string, type: string | null, locatie: string | null): Promise<void>; markeerBuitenGebruik(kunstwerkId: string): Promise<void>; bewaarEisen(kunstwerkId: string, eisen: unknown): Promise<void> }`.
-- Produces (Prisma): `class PrismaEventDedup implements EventDedup`, `class PrismaKunstwerkenReadModel implements KunstwerkenReadModel, BeheerStore`, `class PrismaContractenReadModel implements ContractenReadModel, ContractStore`.
+- Consumes: `StelDiagnose` (Task 9), `KunstwerkenReadModel`/`ContractenReadModel` (Task 9), `RabbitMqConnectie`/`RWS_EXCHANGE` (Task 3), entities (Task 2).
+- Produces (helpers): `interface Envelope { eventId: string; eventType: string; data: Record<string, unknown> }`, `interface EventDedup { isVerwerkt(eventId): Promise<boolean>; markeerVerwerkt(eventId): Promise<void> }`, `startConsumer(connectie, queue, bindings, verwerk): Promise<void>`.
+- Produces (verwerkers, idempotent): `MonitoringIncidentVerwerker`, `ContractVerwerker` (+ `ContractStore`), `BeheerVerwerker` (+ `BeheerStore`), elk met queue/bindings-constanten.
+- Produces (TypeORM): `TypeOrmEventDedup`, `TypeOrmKunstwerkenReadModel` (impl. `KunstwerkenReadModel` + `BeheerStore`), `TypeOrmContractenReadModel` (impl. `ContractenReadModel` + `ContractStore`).
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/infrastructure/consumers.test.ts`:
+`onderhoud/test/infrastructure/consumers.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { MonitoringIncidentVerwerker } from '../../src/infrastructure/messaging/monitoring-incident-consumer.js';
-import { ContractVerwerker, type ContractStore } from '../../src/infrastructure/messaging/contract-consumer.js';
-import { BeheerVerwerker, type BeheerStore } from '../../src/infrastructure/messaging/beheer-consumer.js';
-import type { EventDedup } from '../../src/infrastructure/messaging/consumer-helpers.js';
-import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose.js';
-import { InMemoryOnderhoudRepository, VasteIdGenerator } from '../support/fakes.js';
+import { MonitoringIncidentVerwerker } from '../../src/infrastructure/messaging/monitoring-incident-consumer';
+import { ContractVerwerker, type ContractStore } from '../../src/infrastructure/messaging/contract-consumer';
+import { BeheerVerwerker, type BeheerStore } from '../../src/infrastructure/messaging/beheer-consumer';
+import type { EventDedup } from '../../src/infrastructure/messaging/consumer-helpers';
+import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose';
+import { InMemoryOnderhoudRepository, VasteIdGenerator } from '../support/fakes';
 
 class FakeDedup implements EventDedup {
   private gezien = new Set<string>();
@@ -2734,8 +3086,8 @@ Expected: FAIL — modules ontbreken.
 
 `onderhoud/src/infrastructure/messaging/consumer-helpers.ts`:
 ```ts
-import type { RabbitMqConnectie } from './rabbitmq-connectie.js';
-import { RWS_EXCHANGE } from './rabbitmq-connectie.js';
+import type { RabbitMqConnectie } from './rabbitmq-connectie';
+import { RWS_EXCHANGE } from './rabbitmq-connectie';
 
 export interface Envelope {
   eventId: string;
@@ -2775,8 +3127,8 @@ export async function startConsumer(
 
 `onderhoud/src/infrastructure/messaging/monitoring-incident-consumer.ts`:
 ```ts
-import type { StelDiagnose } from '../../application/diagnose/stel-diagnose.js';
-import type { Envelope, EventDedup } from './consumer-helpers.js';
+import type { StelDiagnose } from '../../application/diagnose/stel-diagnose';
+import type { Envelope, EventDedup } from './consumer-helpers';
 
 export class MonitoringIncidentVerwerker {
   constructor(
@@ -2805,7 +3157,7 @@ export const MONITORING_BINDINGS = ['monitoring.incident.aangemaakt'];
 
 `onderhoud/src/infrastructure/messaging/contract-consumer.ts`:
 ```ts
-import type { Envelope, EventDedup } from './consumer-helpers.js';
+import type { Envelope, EventDedup } from './consumer-helpers';
 
 export interface ContractStore {
   upsertGegund(p: { contractId: string; kunstwerkId: string; opdrachtnemer: string; looptijdStart: string | null; looptijdEind: string | null }): Promise<void>;
@@ -2844,7 +3196,7 @@ export const CONTRACT_BINDINGS = ['contract.onderhoudscontract.*'];
 
 `onderhoud/src/infrastructure/messaging/beheer-consumer.ts`:
 ```ts
-import type { Envelope, EventDedup } from './consumer-helpers.js';
+import type { Envelope, EventDedup } from './consumer-helpers';
 
 export interface BeheerStore {
   upsertKunstwerk(kunstwerkId: string, type: string | null, locatie: string | null): Promise<void>;
@@ -2877,83 +3229,80 @@ export const BEHEER_QUEUE = 'onderhoud.beheer';
 export const BEHEER_BINDINGS = ['beheer.kunstwerk.*', 'beheer.onderhoudseisen.vastgesteld'];
 ```
 
-- [ ] **Step 5: Implementeer de Prisma-read-models + dedup**
+- [ ] **Step 5: Implementeer de TypeORM-read-models + dedup**
 
-`onderhoud/src/infrastructure/db/prisma-read-models.ts`:
+`onderhoud/src/infrastructure/db/typeorm-read-models.ts`:
 ```ts
-import type { PrismaClient } from '@prisma/client';
-import type { ContractenReadModel, KunstwerkenReadModel } from '../../application/ports.js';
-import type { KunstwerkId } from '../../domain/gedeeld/waarden.js';
-import type { EventDedup } from '../messaging/consumer-helpers.js';
-import type { BeheerStore } from '../messaging/beheer-consumer.js';
-import type { ContractStore } from '../messaging/contract-consumer.js';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { BekendKunstwerkEntity } from './entities/bekend-kunstwerk.entity';
+import { GeldendContractEntity } from './entities/geldend-contract.entity';
+import { OnderhoudseisEntity } from './entities/onderhoudseis.entity';
+import { VerwerktEventEntity } from './entities/verwerkt-event.entity';
+import type { ContractenReadModel, KunstwerkenReadModel } from '../../application/ports';
+import type { KunstwerkId } from '../../domain/gedeeld/waarden';
+import type { EventDedup } from '../messaging/consumer-helpers';
+import type { BeheerStore } from '../messaging/beheer-consumer';
+import type { ContractStore } from '../messaging/contract-consumer';
 
-export class PrismaEventDedup implements EventDedup {
-  constructor(private readonly prisma: PrismaClient) {}
+@Injectable()
+export class TypeOrmEventDedup implements EventDedup {
+  constructor(@InjectRepository(VerwerktEventEntity) private readonly repo: Repository<VerwerktEventEntity>) {}
   async isVerwerkt(eventId: string): Promise<boolean> {
-    return (await this.prisma.verwerktEvent.findUnique({ where: { eventId } })) !== null;
+    return (await this.repo.findOne({ where: { eventId } })) !== null;
   }
   async markeerVerwerkt(eventId: string): Promise<void> {
-    await this.prisma.verwerktEvent.create({ data: { eventId } });
+    await this.repo.save(this.repo.create({ eventId }));
   }
 }
 
-export class PrismaKunstwerkenReadModel implements KunstwerkenReadModel, BeheerStore {
-  constructor(private readonly prisma: PrismaClient) {}
+@Injectable()
+export class TypeOrmKunstwerkenReadModel implements KunstwerkenReadModel, BeheerStore {
+  constructor(
+    @InjectRepository(BekendKunstwerkEntity) private readonly kunstwerken: Repository<BekendKunstwerkEntity>,
+    @InjectRepository(OnderhoudseisEntity) private readonly eisen: Repository<OnderhoudseisEntity>,
+  ) {}
 
   async isBekendEnInGebruik(id: KunstwerkId): Promise<boolean> {
-    const rij = await this.prisma.bekendKunstwerk.findUnique({ where: { kunstwerkId: id.waarde } });
+    const rij = await this.kunstwerken.findOne({ where: { kunstwerkId: id.waarde } });
     return rij?.inGebruik ?? false;
   }
   async upsertKunstwerk(kunstwerkId: string, type: string | null, locatie: string | null): Promise<void> {
-    await this.prisma.bekendKunstwerk.upsert({
-      where: { kunstwerkId },
-      create: { kunstwerkId, type: type ?? undefined, locatie: locatie ?? undefined, inGebruik: true },
-      update: { type: type ?? undefined, locatie: locatie ?? undefined, inGebruik: true },
-    });
+    await this.kunstwerken.save(this.kunstwerken.create({ kunstwerkId, type, locatie, inGebruik: true }));
   }
   async markeerBuitenGebruik(kunstwerkId: string): Promise<void> {
-    await this.prisma.bekendKunstwerk.upsert({
-      where: { kunstwerkId },
-      create: { kunstwerkId, inGebruik: false },
-      update: { inGebruik: false },
-    });
+    const bestaand = await this.kunstwerken.findOne({ where: { kunstwerkId } });
+    await this.kunstwerken.save(this.kunstwerken.create({ ...bestaand, kunstwerkId, inGebruik: false }));
   }
   async bewaarEisen(kunstwerkId: string, eisen: unknown): Promise<void> {
-    await this.prisma.onderhoudseis.upsert({
-      where: { kunstwerkId },
-      create: { kunstwerkId, eisen: eisen as object },
-      update: { eisen: eisen as object },
-    });
+    await this.eisen.save(this.eisen.create({ kunstwerkId, eisen }));
   }
 }
 
-export class PrismaContractenReadModel implements ContractenReadModel, ContractStore {
-  constructor(private readonly prisma: PrismaClient) {}
+@Injectable()
+export class TypeOrmContractenReadModel implements ContractenReadModel, ContractStore {
+  constructor(@InjectRepository(GeldendContractEntity) private readonly repo: Repository<GeldendContractEntity>) {}
 
   async geldendContractVoor(id: KunstwerkId): Promise<{ contractId: string; opdrachtnemer: string } | null> {
-    const rij = await this.prisma.geldendContract.findFirst({
+    const rij = await this.repo.findOne({
       where: { kunstwerkId: id.waarde, actief: true },
-      orderBy: { bijgewerktOp: 'desc' },
+      order: { bijgewerktOp: 'DESC' },
     });
     return rij ? { contractId: rij.contractId, opdrachtnemer: rij.opdrachtnemer } : null;
   }
   async upsertGegund(p: { contractId: string; kunstwerkId: string; opdrachtnemer: string; looptijdStart: string | null; looptijdEind: string | null }): Promise<void> {
-    const data = {
+    await this.repo.save(this.repo.create({
+      contractId: p.contractId,
       kunstwerkId: p.kunstwerkId,
       opdrachtnemer: p.opdrachtnemer,
       looptijdStart: p.looptijdStart ? new Date(p.looptijdStart) : null,
       looptijdEind: p.looptijdEind ? new Date(p.looptijdEind) : null,
       actief: true,
-    };
-    await this.prisma.geldendContract.upsert({
-      where: { contractId: p.contractId },
-      create: { contractId: p.contractId, ...data },
-      update: data,
-    });
+    }));
   }
   async markeerAfgerond(contractId: string): Promise<void> {
-    await this.prisma.geldendContract.updateMany({ where: { contractId }, data: { actief: false } });
+    await this.repo.update({ contractId }, { actief: false });
   }
 }
 ```
@@ -2966,7 +3315,7 @@ Expected: PASS (4 tests).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add onderhoud/src/infrastructure/messaging onderhoud/src/infrastructure/db/prisma-read-models.ts onderhoud/test/infrastructure/consumers.test.ts
+git add onderhoud/src/infrastructure/messaging onderhoud/src/infrastructure/db/typeorm-read-models.ts onderhoud/test/infrastructure/consumers.spec.ts
 git commit -m "feat(onderhoud): idempotente consumers voor Monitoring, Contract en Beheer"
 ```
 
@@ -2974,23 +3323,21 @@ git commit -m "feat(onderhoud): idempotente consumers voor Monitoring, Contract 
 
 ### Task 14: Infrastructure — Anti-Corruption Layer voor externe aannemersfacturen
 
-Externe aannemers sturen facturen in hun eigen formaat. De ACL vertaalt dat formaat naar het interne `OntvangFactuurCommand`; het externe model komt nooit voorbij deze module.
+Externe aannemers sturen facturen in hun eigen formaat. De ACL vertaalt dat naar het interne `OntvangFactuurCommand`; het externe model komt nooit voorbij deze module.
 
 **Files:**
 - Create: `onderhoud/src/infrastructure/acl/aannemer-factuur-vertaler.ts`
-- Test: `onderhoud/test/infrastructure/aannemer-factuur-vertaler.test.ts`
+- Test: `onderhoud/test/infrastructure/aannemer-factuur-vertaler.spec.ts`
 
 **Interfaces:**
 - Consumes: `OntvangFactuurCommand` (Task 10).
-- Produces: `interface ExterneFactuur { invoiceNumber: string; workOrderRef: string; totalExVatCents: number; vatCents: number; currency: string; issuedAt: string }` en `vertaalExterneFactuur(extern: ExterneFactuur): OntvangFactuurCommand` (gooit `AclFout` bij een niet-EUR-valuta of ontbrekende `workOrderRef`).
-- Produces: `class AclFout extends Error`.
+- Produces: `interface ExterneFactuur { invoiceNumber: string; workOrderRef: string; totalExVatCents: number; vatCents: number; currency: string; issuedAt: string }` en `vertaalExterneFactuur(extern: ExterneFactuur): OntvangFactuurCommand` (gooit `AclFout` bij niet-EUR-valuta of ontbrekende `workOrderRef`); `class AclFout extends Error`.
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/infrastructure/aannemer-factuur-vertaler.test.ts`:
+`onderhoud/test/infrastructure/aannemer-factuur-vertaler.spec.ts`:
 ```ts
-import { describe, expect, it } from 'vitest';
-import { AclFout, vertaalExterneFactuur } from '../../src/infrastructure/acl/aannemer-factuur-vertaler.js';
+import { AclFout, vertaalExterneFactuur } from '../../src/infrastructure/acl/aannemer-factuur-vertaler';
 
 const extern = {
   invoiceNumber: 'INV-2026-042',
@@ -3026,7 +3373,7 @@ Expected: FAIL — module ontbreekt.
 
 `onderhoud/src/infrastructure/acl/aannemer-factuur-vertaler.ts`:
 ```ts
-import type { OntvangFactuurCommand } from '../../application/onderhoud/ontvang-factuur.js';
+import type { OntvangFactuurCommand } from '../../application/onderhoud/ontvang-factuur';
 
 export class AclFout extends Error {
   constructor(bericht: string) {
@@ -3063,43 +3410,48 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add onderhoud/src/infrastructure/acl onderhoud/test/infrastructure/aannemer-factuur-vertaler.test.ts
+git add onderhoud/src/infrastructure/acl onderhoud/test/infrastructure/aannemer-factuur-vertaler.spec.ts
 git commit -m "feat(onderhoud): ACL voor externe aannemersfacturen"
 ```
 
 ---
 
-### Task 15: Interface — storing-, diagnose- en onderhoud-routes
+### Task 15: Interface — exception-filter + storing-/diagnose-/onderhoud-controllers
 
-REST-routes voor de instappunten en het traject. DTO-validatie en foutafhandeling horen hier; bedrijfsregels blijven in `domain`. `DomeinFout` → 400, niet gevonden → 404.
+NestJS-controllers voor de instappunten en het traject, met class-validator-DTO's en een exception-filter die `DomeinFout` → 400 (of 404 bij "niet gevonden") en `AclFout` → 422 vertaalt. Bedrijfsregels blijven in `domain`.
 
 **Files:**
-- Create: `onderhoud/src/interface/http/fout-afhandeling.ts`
-- Create: `onderhoud/src/interface/http/storing-routes.ts`
-- Create: `onderhoud/src/interface/http/onderhoud-routes.ts`
-- Test: `onderhoud/test/interface/storing-onderhoud-routes.test.ts`
+- Create: `onderhoud/src/interface/http/domein-fout.filter.ts`
+- Create: `onderhoud/src/interface/http/dto/meld-storing.dto.ts`
+- Create: `onderhoud/src/interface/http/dto/onderhoud.dto.ts`
+- Create: `onderhoud/src/interface/http/storing.controller.ts`
+- Create: `onderhoud/src/interface/http/onderhoud.controller.ts`
+- Test: `onderhoud/test/interface/onderhoud-controllers.e2e-spec.ts`
 
 **Interfaces:**
-- Consumes: use cases (Tasks 9-10), repos (Task 8), fakes (Task 9), `bouwApp` (Task 1; routes worden in Task 17 aan `bouwApp` gekoppeld — de test bedraadt de routes hier rechtstreeks op een kale Fastify-instantie).
-- Produces: `vertaalFout(fout: unknown, reply: FastifyReply): void`.
-- Produces: `registreerStoringRoutes(app: FastifyInstance, deps: StoringRouteDeps)` met `interface StoringRouteDeps { meldStoring: MeldStoring; storingen: StoringRepository }` → `POST /api/storingen` (201), `GET /api/storingen` (200).
-- Produces: `registreerOnderhoudRoutes(app: FastifyInstance, deps: OnderhoudRouteDeps)` met `interface OnderhoudRouteDeps { stelDiagnose: StelDiagnose; start: StartOnderhoud; inspecteer: RegistreerInspectie; rondAf: RondOnderhoudAf; ontvangFactuur: OntvangFactuur; keurFactuurGoed: KeurFactuurGoed; onderhouden: OnderhoudRepository }` → `POST /api/diagnoses` (201/200), `GET /api/onderhoud`, `GET /api/onderhoud/:id`, `POST /api/onderhoud/:id/start` (200), `POST /api/onderhoud/:id/inspecties` (201), `POST /api/onderhoud/:id/afronden` (200), `POST /api/onderhoud/:id/facturen` (201), `POST /api/onderhoud/:id/facturen/:factuurId/goedkeuring` (200).
+- Consumes: use cases (Tasks 9-10), repo-tokens (Task 8).
+- Produces: `DomeinFoutFilter` (`@Catch(DomeinFout, AclFout)`).
+- Produces: DTO-klassen (class-validator).
+- Produces: `StoringController` (`POST /storingen` 201, `GET /storingen`), `OnderhoudController` (`POST /diagnoses`, `GET /onderhoud`, `GET /onderhoud/:id`, `POST /onderhoud/:id/start`, `.../inspecties`, `.../afronden`, `.../facturen`, `.../facturen/:factuurId/goedkeuring`).
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing test (Nest e2e met supertest)**
 
-`onderhoud/test/interface/storing-onderhoud-routes.test.ts`:
+`onderhoud/test/interface/onderhoud-controllers.e2e-spec.ts`:
 ```ts
-import Fastify from 'fastify';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { registreerStoringRoutes } from '../../src/interface/http/storing-routes.js';
-import { registreerOnderhoudRoutes } from '../../src/interface/http/onderhoud-routes.js';
-import { MeldStoring } from '../../src/application/storing/meld-storing.js';
-import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose.js';
-import { StartOnderhoud } from '../../src/application/onderhoud/start-onderhoud.js';
-import { RegistreerInspectie } from '../../src/application/onderhoud/registreer-inspectie.js';
-import { RondOnderhoudAf } from '../../src/application/onderhoud/rond-onderhoud-af.js';
-import { OntvangFactuur } from '../../src/application/onderhoud/ontvang-factuur.js';
-import { KeurFactuurGoed } from '../../src/application/onderhoud/keur-factuur-goed.js';
+import { Test } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import request from 'supertest';
+import { StoringController } from '../../src/interface/http/storing.controller';
+import { OnderhoudController } from '../../src/interface/http/onderhoud.controller';
+import { DomeinFoutFilter } from '../../src/interface/http/domein-fout.filter';
+import { MeldStoring } from '../../src/application/storing/meld-storing';
+import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose';
+import { StartOnderhoud } from '../../src/application/onderhoud/start-onderhoud';
+import { RegistreerInspectie } from '../../src/application/onderhoud/registreer-inspectie';
+import { RondOnderhoudAf } from '../../src/application/onderhoud/rond-onderhoud-af';
+import { OntvangFactuur } from '../../src/application/onderhoud/ontvang-factuur';
+import { KeurFactuurGoed } from '../../src/application/onderhoud/keur-factuur-goed';
+import { ONDERHOUD_REPOSITORY, STORING_REPOSITORY } from '../../src/domain/repositories';
 import {
   FakeContractenReadModel,
   FakeEventPublisher,
@@ -3107,173 +3459,256 @@ import {
   InMemoryOnderhoudRepository,
   InMemoryStoringRepository,
   VasteIdGenerator,
-} from '../support/fakes.js';
+} from '../support/fakes';
 
-function bouwTestApp() {
-  const storingen = new InMemoryStoringRepository();
-  const onderhouden = new InMemoryOnderhoudRepository();
-  const publisher = new FakeEventPublisher();
-  const ids = new VasteIdGenerator('X');
-  const app = Fastify();
-  registreerStoringRoutes(app, {
-    meldStoring: new MeldStoring(storingen, onderhouden, publisher, new FakeKunstwerkenReadModel(true), ids, 'soepel'),
-    storingen,
-  });
-  registreerOnderhoudRoutes(app, {
-    stelDiagnose: new StelDiagnose(onderhouden, ids),
-    start: new StartOnderhoud(onderhouden, new FakeContractenReadModel({ contractId: 'C1', opdrachtnemer: 'BAM' }), publisher, 'soepel'),
-    inspecteer: new RegistreerInspectie(onderhouden, ids),
-    rondAf: new RondOnderhoudAf(onderhouden, storingen, publisher),
-    ontvangFactuur: new OntvangFactuur(onderhouden, ids),
-    keurFactuurGoed: new KeurFactuurGoed(onderhouden),
-    onderhouden,
-  });
-  return { app, publisher };
-}
-
-describe('storing- en onderhoud-routes', () => {
-  let app: ReturnType<typeof bouwTestApp>['app'];
+describe('Onderhoud-controllers (e2e)', () => {
+  let app: INestApplication;
   let publisher: FakeEventPublisher;
 
-  beforeEach(() => {
-    ({ app, publisher } = bouwTestApp());
+  beforeEach(async () => {
+    const storingen = new InMemoryStoringRepository();
+    const onderhouden = new InMemoryOnderhoudRepository();
+    publisher = new FakeEventPublisher();
+    const ids = new VasteIdGenerator('X');
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [StoringController, OnderhoudController],
+      providers: [
+        { provide: MeldStoring, useValue: new MeldStoring(storingen, onderhouden, publisher, new FakeKunstwerkenReadModel(true), ids, 'soepel') },
+        { provide: StelDiagnose, useValue: new StelDiagnose(onderhouden, ids) },
+        { provide: StartOnderhoud, useValue: new StartOnderhoud(onderhouden, new FakeContractenReadModel({ contractId: 'C1', opdrachtnemer: 'BAM' }), publisher, 'soepel') },
+        { provide: RegistreerInspectie, useValue: new RegistreerInspectie(onderhouden, ids) },
+        { provide: RondOnderhoudAf, useValue: new RondOnderhoudAf(onderhouden, storingen, publisher) },
+        { provide: OntvangFactuur, useValue: new OntvangFactuur(onderhouden, ids) },
+        { provide: KeurFactuurGoed, useValue: new KeurFactuurGoed(onderhouden) },
+        { provide: STORING_REPOSITORY, useValue: storingen },
+        { provide: ONDERHOUD_REPOSITORY, useValue: onderhouden },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api', { exclude: ['health'] });
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalFilters(new DomeinFoutFilter());
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
   });
 
   it('meldt een storing via POST /api/storingen', async () => {
-    const antwoord = await app.inject({ method: 'POST', url: '/api/storingen', payload: { kunstwerkId: 'KW1', omschrijving: 'scheur in pijler', ernst: 'Hoog' } });
-    expect(antwoord.statusCode).toBe(201);
-    const body = antwoord.json();
-    expect(body.storingId).toBe('X-1');
-    expect(body.onderhoudId).toBe('X-2');
-    expect((await app.inject({ method: 'GET', url: '/api/storingen' })).json()).toHaveLength(1);
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/storingen')
+      .send({ kunstwerkId: 'KW1', omschrijving: 'scheur in pijler', ernst: 'Hoog' });
+    expect(antwoord.status).toBe(201);
+    expect(antwoord.body.storingId).toBe('X-1');
+    expect(antwoord.body.onderhoudId).toBe('X-2');
+    const lijst = await request(app.getHttpServer()).get('/api/storingen');
+    expect(lijst.body).toHaveLength(1);
   });
 
   it('geeft 400 bij een ongeldige ernst', async () => {
-    const antwoord = await app.inject({ method: 'POST', url: '/api/storingen', payload: { kunstwerkId: 'KW1', omschrijving: 'x', ernst: 'Enorm' } });
-    expect(antwoord.statusCode).toBe(400);
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/storingen')
+      .send({ kunstwerkId: 'KW1', omschrijving: 'x', ernst: 'Enorm' });
+    expect(antwoord.status).toBe(400);
   });
 
-  it('doorloopt de hele trajectflow via de routes', async () => {
-    const diagnose = await app.inject({ method: 'POST', url: '/api/diagnoses', payload: { kunstwerkId: 'KW1', incidentId: 'INC1', bevinding: 'trilling', ernst: 'Kritiek' } });
-    expect(diagnose.statusCode).toBe(201);
-    const { onderhoudId } = diagnose.json();
+  it('doorloopt de hele trajectflow via de controllers', async () => {
+    const diagnose = await request(app.getHttpServer())
+      .post('/api/diagnoses')
+      .send({ kunstwerkId: 'KW1', incidentId: 'INC1', bevinding: 'trilling', ernst: 'Kritiek' });
+    expect(diagnose.status).toBe(201);
+    const onderhoudId = diagnose.body.onderhoudId;
 
-    expect((await app.inject({ method: 'POST', url: `/api/onderhoud/${onderhoudId}/start`, payload: { datum: '2026-07-01' } })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'POST', url: `/api/onderhoud/${onderhoudId}/inspecties`, payload: { datum: '2026-07-05', oordeel: 'Goedgekeurd' } })).statusCode).toBe(201);
-    const factuur = await app.inject({ method: 'POST', url: `/api/onderhoud/${onderhoudId}/facturen`, payload: { bedragEuro: 2500, ontvangenOp: '2026-07-06' } });
-    expect(factuur.statusCode).toBe(201);
-    expect((await app.inject({ method: 'POST', url: `/api/onderhoud/${onderhoudId}/afronden`, payload: { resultaat: 'hersteld', datum: '2026-07-10' } })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'POST', url: `/api/onderhoud/${onderhoudId}/facturen/${factuur.json().factuurId}/goedkeuring` })).statusCode).toBe(200);
+    expect((await request(app.getHttpServer()).post(`/api/onderhoud/${onderhoudId}/start`).send({ datum: '2026-07-01' })).status).toBe(200);
+    expect((await request(app.getHttpServer()).post(`/api/onderhoud/${onderhoudId}/inspecties`).send({ datum: '2026-07-05', oordeel: 'Goedgekeurd' })).status).toBe(201);
+    const factuur = await request(app.getHttpServer()).post(`/api/onderhoud/${onderhoudId}/facturen`).send({ bedragEuro: 2500, ontvangenOp: '2026-07-06' });
+    expect(factuur.status).toBe(201);
+    expect((await request(app.getHttpServer()).post(`/api/onderhoud/${onderhoudId}/afronden`).send({ resultaat: 'hersteld', datum: '2026-07-10' })).status).toBe(200);
+    expect((await request(app.getHttpServer()).post(`/api/onderhoud/${onderhoudId}/facturen/${factuur.body.factuurId}/goedkeuring`).send()).status).toBe(200);
 
-    const detail = await app.inject({ method: 'GET', url: `/api/onderhoud/${onderhoudId}` });
-    expect(detail.json().status).toBe('Afgerond');
+    const detail = await request(app.getHttpServer()).get(`/api/onderhoud/${onderhoudId}`);
+    expect(detail.body.status).toBe('Afgerond');
     expect(publisher.types()).toEqual(expect.arrayContaining(['onderhoud.onderhoud.gestart', 'onderhoud.onderhoud.afgerond']));
   });
 
   it('geeft 200 zonder traject bij een diagnose onder de drempel', async () => {
-    const antwoord = await app.inject({ method: 'POST', url: '/api/diagnoses', payload: { kunstwerkId: 'KW1', bevinding: 'lichte afwijking', ernst: 'Laag' } });
-    expect(antwoord.statusCode).toBe(200);
-    expect(antwoord.json().onderhoudId).toBeNull();
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/diagnoses')
+      .send({ kunstwerkId: 'KW1', bevinding: 'lichte afwijking', ernst: 'Laag' });
+    expect(antwoord.status).toBe(200);
+    expect(antwoord.body.onderhoudId).toBeNull();
   });
 
   it('geeft 404 bij een onbekend traject', async () => {
-    expect((await app.inject({ method: 'GET', url: '/api/onderhoud/BESTAAT-NIET' })).statusCode).toBe(404);
-    expect((await app.inject({ method: 'POST', url: '/api/onderhoud/BESTAAT-NIET/start', payload: { datum: '2026-07-01' } })).statusCode).toBe(404);
+    expect((await request(app.getHttpServer()).get('/api/onderhoud/BESTAAT-NIET')).status).toBe(404);
+    expect((await request(app.getHttpServer()).post('/api/onderhoud/BESTAAT-NIET/start').send({ datum: '2026-07-01' })).status).toBe(404);
   });
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test -- storing-onderhoud-routes`
+Run: `npm test -- onderhoud-controllers`
 Expected: FAIL — modules ontbreken.
 
-- [ ] **Step 3: Implementeer `fout-afhandeling.ts`**
+- [ ] **Step 3: Implementeer de exception-filter**
 
-`onderhoud/src/interface/http/fout-afhandeling.ts`:
+`onderhoud/src/interface/http/domein-fout.filter.ts`:
 ```ts
-import type { FastifyReply } from 'fastify';
-import { DomeinFout } from '../../domain/gedeeld/fouten.js';
+import { ArgumentsHost, Catch, ExceptionFilter, HttpStatus } from '@nestjs/common';
+import type { Response } from 'express';
+import { DomeinFout } from '../../domain/gedeeld/fouten';
+import { AclFout } from '../../infrastructure/acl/aannemer-factuur-vertaler';
 
-export function vertaalFout(fout: unknown, reply: FastifyReply): void {
-  if (fout instanceof DomeinFout) {
-    const code = fout.message.includes('niet gevonden') ? 404 : 400;
-    reply.code(code).send({ fout: fout.message });
-    return;
+@Catch(DomeinFout, AclFout)
+export class DomeinFoutFilter implements ExceptionFilter {
+  catch(fout: DomeinFout | AclFout, host: ArgumentsHost): void {
+    const response = host.switchToHttp().getResponse<Response>();
+    let status = HttpStatus.BAD_REQUEST;
+    if (fout instanceof AclFout) status = HttpStatus.UNPROCESSABLE_ENTITY;
+    else if (fout.message.includes('niet gevonden')) status = HttpStatus.NOT_FOUND;
+    response.status(status).json({ fout: fout.message });
   }
-  reply.code(500).send({ fout: 'interne fout' });
 }
 ```
 
-- [ ] **Step 4: Implementeer `storing-routes.ts`**
+- [ ] **Step 4: Implementeer de DTO's**
 
-`onderhoud/src/interface/http/storing-routes.ts`:
+`onderhoud/src/interface/http/dto/meld-storing.dto.ts`:
 ```ts
-import type { FastifyInstance } from 'fastify';
-import type { MeldStoring } from '../../application/storing/meld-storing.js';
-import type { StoringRepository } from '../../domain/repositories.js';
-import { vertaalFout } from './fout-afhandeling.js';
+import { IsNotEmpty, IsString } from 'class-validator';
 
-export interface StoringRouteDeps {
-  meldStoring: MeldStoring;
-  storingen: StoringRepository;
-}
-
-interface MeldStoringBody {
+export class MeldStoringDto {
+  @IsString()
+  @IsNotEmpty()
   kunstwerkId: string;
+
+  @IsString()
+  @IsNotEmpty()
   omschrijving: string;
+
+  @IsString()
+  @IsNotEmpty()
+  ernst: string;
+}
+```
+
+`onderhoud/src/interface/http/dto/onderhoud.dto.ts`:
+```ts
+import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+
+export class StelDiagnoseDto {
+  @IsString()
+  @IsNotEmpty()
+  kunstwerkId: string;
+
+  @IsString()
+  @IsOptional()
+  incidentId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  bevinding: string;
+
+  @IsString()
+  @IsNotEmpty()
   ernst: string;
 }
 
-export function registreerStoringRoutes(app: FastifyInstance, deps: StoringRouteDeps): void {
-  app.post<{ Body: MeldStoringBody }>('/api/storingen', async (req, reply) => {
-    try {
-      const uitkomst = await deps.meldStoring.uitvoeren(req.body);
-      reply.code(201).send(uitkomst);
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+export class StartOnderhoudDto {
+  @IsString()
+  @IsNotEmpty()
+  datum: string;
+}
 
-  app.get('/api/storingen', async (_req, reply) => {
-    const storingen = await deps.storingen.zoekAlle();
-    reply.send(storingen.map((s) => ({
+export class RegistreerInspectieDto {
+  @IsString()
+  @IsNotEmpty()
+  datum: string;
+
+  @IsIn(['Goedgekeurd', 'Afgekeurd'])
+  oordeel: 'Goedgekeurd' | 'Afgekeurd';
+
+  @IsString()
+  @IsOptional()
+  opmerkingen?: string;
+}
+
+export class RondAfDto {
+  @IsString()
+  @IsNotEmpty()
+  resultaat: string;
+
+  @IsString()
+  @IsNotEmpty()
+  datum: string;
+}
+
+export class OntvangFactuurDto {
+  @IsNumber()
+  bedragEuro: number;
+
+  @IsString()
+  @IsNotEmpty()
+  ontvangenOp: string;
+}
+```
+
+- [ ] **Step 5: Implementeer `storing.controller.ts`**
+
+`onderhoud/src/interface/http/storing.controller.ts`:
+```ts
+import { Body, Controller, Get, Inject, Post } from '@nestjs/common';
+import { MeldStoring } from '../../application/storing/meld-storing';
+import { STORING_REPOSITORY, type StoringRepository } from '../../domain/repositories';
+import { MeldStoringDto } from './dto/meld-storing.dto';
+
+@Controller('storingen')
+export class StoringController {
+  constructor(
+    private readonly meldStoring: MeldStoring,
+    @Inject(STORING_REPOSITORY) private readonly storingen: StoringRepository,
+  ) {}
+
+  @Post()
+  async meld(@Body() dto: MeldStoringDto) {
+    return this.meldStoring.uitvoeren(dto);
+  }
+
+  @Get()
+  async lijst() {
+    const storingen = await this.storingen.zoekAlle();
+    return storingen.map((s) => ({
       storingId: s.id.waarde,
       kunstwerkId: s.kunstwerkId.waarde,
       omschrijving: s.omschrijving,
       ernst: s.ernst,
       status: s.status,
       onderhoudId: s.onderhoudId?.waarde ?? null,
-    })));
-  });
+    }));
+  }
 }
 ```
 
-- [ ] **Step 5: Implementeer `onderhoud-routes.ts`**
+- [ ] **Step 6: Implementeer `onderhoud.controller.ts`**
 
-`onderhoud/src/interface/http/onderhoud-routes.ts`:
+`onderhoud/src/interface/http/onderhoud.controller.ts`:
 ```ts
-import type { FastifyInstance } from 'fastify';
-import type { StelDiagnose } from '../../application/diagnose/stel-diagnose.js';
-import type { StartOnderhoud } from '../../application/onderhoud/start-onderhoud.js';
-import type { RegistreerInspectie } from '../../application/onderhoud/registreer-inspectie.js';
-import type { RondOnderhoudAf } from '../../application/onderhoud/rond-onderhoud-af.js';
-import type { OntvangFactuur } from '../../application/onderhoud/ontvang-factuur.js';
-import type { KeurFactuurGoed } from '../../application/onderhoud/keur-factuur-goed.js';
-import type { OnderhoudRepository } from '../../domain/repositories.js';
-import type { Onderhoud } from '../../domain/onderhoud/onderhoud.js';
-import { OnderhoudId } from '../../domain/gedeeld/waarden.js';
-import { vertaalFout } from './fout-afhandeling.js';
-
-export interface OnderhoudRouteDeps {
-  stelDiagnose: StelDiagnose;
-  start: StartOnderhoud;
-  inspecteer: RegistreerInspectie;
-  rondAf: RondOnderhoudAf;
-  ontvangFactuur: OntvangFactuur;
-  keurFactuurGoed: KeurFactuurGoed;
-  onderhouden: OnderhoudRepository;
-}
+import { Body, Controller, Get, HttpCode, Inject, NotFoundException, Param, Post, Res } from '@nestjs/common';
+import type { Response } from 'express';
+import { StelDiagnose } from '../../application/diagnose/stel-diagnose';
+import { StartOnderhoud } from '../../application/onderhoud/start-onderhoud';
+import { RegistreerInspectie } from '../../application/onderhoud/registreer-inspectie';
+import { RondOnderhoudAf } from '../../application/onderhoud/rond-onderhoud-af';
+import { OntvangFactuur } from '../../application/onderhoud/ontvang-factuur';
+import { KeurFactuurGoed } from '../../application/onderhoud/keur-factuur-goed';
+import { ONDERHOUD_REPOSITORY, type OnderhoudRepository } from '../../domain/repositories';
+import { OnderhoudId } from '../../domain/gedeeld/waarden';
+import type { Onderhoud } from '../../domain/onderhoud/onderhoud';
+import { OntvangFactuurDto, RegistreerInspectieDto, RondAfDto, StartOnderhoudDto, StelDiagnoseDto } from './dto/onderhoud.dto';
 
 function naarDto(o: Onderhoud) {
   return {
@@ -3290,193 +3725,195 @@ function naarDto(o: Onderhoud) {
   };
 }
 
-export function registreerOnderhoudRoutes(app: FastifyInstance, deps: OnderhoudRouteDeps): void {
-  app.post<{ Body: { kunstwerkId: string; incidentId?: string; bevinding: string; ernst: string } }>('/api/diagnoses', async (req, reply) => {
-    try {
-      const { onderhoudId } = await deps.stelDiagnose.uitvoeren(req.body);
-      reply.code(onderhoudId ? 201 : 200).send({ onderhoudId });
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+@Controller()
+export class OnderhoudController {
+  constructor(
+    private readonly stelDiagnose: StelDiagnose,
+    private readonly start: StartOnderhoud,
+    private readonly inspecteer: RegistreerInspectie,
+    private readonly rondAf: RondOnderhoudAf,
+    private readonly ontvangFactuur: OntvangFactuur,
+    private readonly keurFactuurGoed: KeurFactuurGoed,
+    @Inject(ONDERHOUD_REPOSITORY) private readonly onderhouden: OnderhoudRepository,
+  ) {}
 
-  app.get('/api/onderhoud', async (_req, reply) => {
-    const trajecten = await deps.onderhouden.zoekAlle();
-    reply.send(trajecten.map(naarDto));
-  });
+  @Post('diagnoses')
+  async diagnose(@Body() dto: StelDiagnoseDto, @Res({ passthrough: true }) res: Response) {
+    const uitkomst = await this.stelDiagnose.uitvoeren(dto);
+    res.status(uitkomst.onderhoudId ? 201 : 200);
+    return uitkomst;
+  }
 
-  app.get<{ Params: { id: string } }>('/api/onderhoud/:id', async (req, reply) => {
-    const traject = await deps.onderhouden.zoek(OnderhoudId.van(req.params.id));
-    if (!traject) {
-      reply.code(404).send({ fout: 'onderhoudstraject niet gevonden' });
-      return;
-    }
-    reply.send(naarDto(traject));
-  });
+  @Get('onderhoud')
+  async lijst() {
+    return (await this.onderhouden.zoekAlle()).map(naarDto);
+  }
 
-  app.post<{ Params: { id: string }; Body: { datum: string } }>('/api/onderhoud/:id/start', async (req, reply) => {
-    try {
-      await deps.start.uitvoeren({ onderhoudId: req.params.id, datum: req.body.datum });
-      reply.code(200).send({ status: 'Gestart' });
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+  @Get('onderhoud/:id')
+  async detail(@Param('id') id: string) {
+    const traject = await this.onderhouden.zoek(OnderhoudId.van(id));
+    if (!traject) throw new NotFoundException({ fout: 'onderhoudstraject niet gevonden' });
+    return naarDto(traject);
+  }
 
-  app.post<{ Params: { id: string }; Body: { datum: string; oordeel: 'Goedgekeurd' | 'Afgekeurd'; opmerkingen?: string } }>('/api/onderhoud/:id/inspecties', async (req, reply) => {
-    try {
-      await deps.inspecteer.uitvoeren({ onderhoudId: req.params.id, ...req.body });
-      reply.code(201).send({ status: 'Geregistreerd' });
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+  @Post('onderhoud/:id/start')
+  @HttpCode(200)
+  async startTraject(@Param('id') id: string, @Body() dto: StartOnderhoudDto) {
+    await this.start.uitvoeren({ onderhoudId: id, datum: dto.datum });
+    return { status: 'Gestart' };
+  }
 
-  app.post<{ Params: { id: string }; Body: { resultaat: string; datum: string } }>('/api/onderhoud/:id/afronden', async (req, reply) => {
-    try {
-      await deps.rondAf.uitvoeren({ onderhoudId: req.params.id, ...req.body });
-      reply.code(200).send({ status: 'Afgerond' });
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+  @Post('onderhoud/:id/inspecties')
+  async inspectie(@Param('id') id: string, @Body() dto: RegistreerInspectieDto) {
+    await this.inspecteer.uitvoeren({ onderhoudId: id, ...dto });
+    return { status: 'Geregistreerd' };
+  }
 
-  app.post<{ Params: { id: string }; Body: { bedragEuro: number; ontvangenOp: string } }>('/api/onderhoud/:id/facturen', async (req, reply) => {
-    try {
-      const uitkomst = await deps.ontvangFactuur.uitvoeren({ onderhoudId: req.params.id, ...req.body });
-      reply.code(201).send(uitkomst);
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+  @Post('onderhoud/:id/afronden')
+  @HttpCode(200)
+  async afronden(@Param('id') id: string, @Body() dto: RondAfDto) {
+    await this.rondAf.uitvoeren({ onderhoudId: id, ...dto });
+    return { status: 'Afgerond' };
+  }
 
-  app.post<{ Params: { id: string; factuurId: string } }>('/api/onderhoud/:id/facturen/:factuurId/goedkeuring', async (req, reply) => {
-    try {
-      await deps.keurFactuurGoed.uitvoeren({ onderhoudId: req.params.id, factuurId: req.params.factuurId });
-      reply.code(200).send({ status: 'Goedgekeurd' });
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+  @Post('onderhoud/:id/facturen')
+  async factuur(@Param('id') id: string, @Body() dto: OntvangFactuurDto) {
+    return this.ontvangFactuur.uitvoeren({ onderhoudId: id, ...dto });
+  }
+
+  @Post('onderhoud/:id/facturen/:factuurId/goedkeuring')
+  @HttpCode(200)
+  async keurGoed(@Param('id') id: string, @Param('factuurId') factuurId: string) {
+    await this.keurFactuurGoed.uitvoeren({ onderhoudId: id, factuurId });
+    return { status: 'Goedgekeurd' };
+  }
 }
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+> `GET /onderhoud/:id` gooit `NotFoundException` (Nest-standaard 404); de overige "niet gevonden"-fouten uit de use cases worden door `DomeinFoutFilter` óók 404. Zo geeft zowel de query als het commando 404 bij een onbekend traject.
 
-Run: `npm test -- storing-onderhoud-routes`
+- [ ] **Step 7: Run test to verify it passes**
+
+Run: `npm test -- onderhoud-controllers`
 Expected: PASS (5 tests).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add onderhoud/src/interface/http onderhoud/test/interface/storing-onderhoud-routes.test.ts
-git commit -m "feat(onderhoud): storing-, diagnose- en onderhoud-routes"
+git add onderhoud/src/interface/http onderhoud/test/interface/onderhoud-controllers.e2e-spec.ts
+git commit -m "feat(onderhoud): exception-filter en storing-/onderhoud-controllers"
 ```
 
 ---
 
-### Task 16: Interface — schema-, externe-factuur- en contractaanvraag-routes
+### Task 16: Interface — schema-, externe-factuur- en contractaanvraag-controllers
 
 **Files:**
-- Create: `onderhoud/src/interface/http/schema-routes.ts`
-- Create: `onderhoud/src/interface/http/extern-routes.ts`
-- Test: `onderhoud/test/interface/schema-extern-routes.test.ts`
+- Create: `onderhoud/src/interface/http/dto/schema.dto.ts`
+- Create: `onderhoud/src/interface/http/dto/extern.dto.ts`
+- Create: `onderhoud/src/interface/http/schema.controller.ts`
+- Create: `onderhoud/src/interface/http/extern.controller.ts`
+- Test: `onderhoud/test/interface/schema-extern-controllers.e2e-spec.ts`
 
 **Interfaces:**
-- Consumes: `MaakSchema`/`DienContractaanvraagIn` (Task 10), `OntvangFactuur` (Task 10), ACL-vertaler (Task 14), repos (Task 8).
-- Produces: `registreerSchemaRoutes(app, deps)` met `interface SchemaRouteDeps { maakSchema: MaakSchema; schemas: SchemaRepository }` → `POST /api/schemas` (201), `GET /api/schemas` (200).
-- Produces: `registreerExternRoutes(app, deps)` met `interface ExternRouteDeps { ontvangFactuur: OntvangFactuur; dienContractaanvraagIn: DienContractaanvraagIn }` → `POST /api/extern/facturen` (201, extern formaat via ACL; `AclFout` → 422) en `POST /api/contractaanvragen` (202).
+- Consumes: `MaakSchema`/`DienContractaanvraagIn` (Task 10), `OntvangFactuur` (Task 10), ACL-vertaler (Task 14), repo-tokens (Task 8).
+- Produces: `SchemaController` (`POST /schemas` 201, `GET /schemas`), `ExternController` (`POST /extern/facturen` 201, `AclFout` → 422 via filter; `POST /contractaanvragen` 202).
 
 - [ ] **Step 1: Write the failing test**
 
-`onderhoud/test/interface/schema-extern-routes.test.ts`:
+`onderhoud/test/interface/schema-extern-controllers.e2e-spec.ts`:
 ```ts
-import Fastify from 'fastify';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { registreerSchemaRoutes } from '../../src/interface/http/schema-routes.js';
-import { registreerExternRoutes } from '../../src/interface/http/extern-routes.js';
-import { MaakSchema } from '../../src/application/schema/maak-schema.js';
-import { DienContractaanvraagIn } from '../../src/application/contractaanvraag/dien-contractaanvraag-in.js';
-import { OntvangFactuur } from '../../src/application/onderhoud/ontvang-factuur.js';
-import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose.js';
-import { StartOnderhoud } from '../../src/application/onderhoud/start-onderhoud.js';
+import { Test } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import request from 'supertest';
+import { SchemaController } from '../../src/interface/http/schema.controller';
+import { ExternController } from '../../src/interface/http/extern.controller';
+import { DomeinFoutFilter } from '../../src/interface/http/domein-fout.filter';
+import { MaakSchema } from '../../src/application/schema/maak-schema';
+import { DienContractaanvraagIn } from '../../src/application/contractaanvraag/dien-contractaanvraag-in';
+import { OntvangFactuur } from '../../src/application/onderhoud/ontvang-factuur';
+import { StelDiagnose } from '../../src/application/diagnose/stel-diagnose';
+import { StartOnderhoud } from '../../src/application/onderhoud/start-onderhoud';
+import { SCHEMA_REPOSITORY } from '../../src/domain/repositories';
 import {
   FakeContractenReadModel,
   FakeEventPublisher,
   InMemoryOnderhoudRepository,
   InMemorySchemaRepository,
   VasteIdGenerator,
-} from '../support/fakes.js';
+} from '../support/fakes';
 
-describe('schema- en extern-routes', () => {
-  let app: ReturnType<typeof Fastify>;
+describe('Schema- en extern-controllers (e2e)', () => {
+  let app: INestApplication;
   let publisher: FakeEventPublisher;
   let onderhouden: InMemoryOnderhoudRepository;
   let ids: VasteIdGenerator;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     publisher = new FakeEventPublisher();
     onderhouden = new InMemoryOnderhoudRepository();
     ids = new VasteIdGenerator('X');
-    app = Fastify();
-    registreerSchemaRoutes(app, {
-      maakSchema: new MaakSchema(new InMemorySchemaRepository(), new FakeContractenReadModel({ contractId: 'C1', opdrachtnemer: 'BAM' }), ids, 'soepel'),
-      schemas: new InMemorySchemaRepository(),
-    });
-    registreerExternRoutes(app, {
-      ontvangFactuur: new OntvangFactuur(onderhouden, ids),
-      dienContractaanvraagIn: new DienContractaanvraagIn(publisher),
-    });
+    const schemas = new InMemorySchemaRepository();
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [SchemaController, ExternController],
+      providers: [
+        { provide: MaakSchema, useValue: new MaakSchema(schemas, new FakeContractenReadModel({ contractId: 'C1', opdrachtnemer: 'BAM' }), ids, 'soepel') },
+        { provide: DienContractaanvraagIn, useValue: new DienContractaanvraagIn(publisher) },
+        { provide: OntvangFactuur, useValue: new OntvangFactuur(onderhouden, ids) },
+        { provide: SCHEMA_REPOSITORY, useValue: schemas },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api', { exclude: ['health'] });
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalFilters(new DomeinFoutFilter());
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
   });
 
   it('maakt een schema via POST /api/schemas', async () => {
-    const antwoord = await app.inject({
-      method: 'POST',
-      url: '/api/schemas',
-      payload: { kunstwerkId: 'KW1', periodeStart: '2026-01-01', periodeEind: '2026-12-31', momenten: [{ datum: '2026-03-01', omschrijving: 'smeren' }] },
-    });
-    expect(antwoord.statusCode).toBe(201);
-    expect(antwoord.json().schemaId).toBe('X-1');
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/schemas')
+      .send({ kunstwerkId: 'KW1', periodeStart: '2026-01-01', periodeEind: '2026-12-31', momenten: [{ datum: '2026-03-01', omschrijving: 'smeren' }] });
+    expect(antwoord.status).toBe(201);
+    expect(antwoord.body.schemaId).toBe('X-1');
   });
 
   it('geeft 400 bij een schema zonder momenten', async () => {
-    const antwoord = await app.inject({
-      method: 'POST',
-      url: '/api/schemas',
-      payload: { kunstwerkId: 'KW1', periodeStart: '2026-01-01', periodeEind: '2026-12-31', momenten: [] },
-    });
-    expect(antwoord.statusCode).toBe(400);
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/schemas')
+      .send({ kunstwerkId: 'KW1', periodeStart: '2026-01-01', periodeEind: '2026-12-31', momenten: [] });
+    expect(antwoord.status).toBe(400);
   });
 
   it('ontvangt een externe factuur via de ACL', async () => {
     const { onderhoudId } = await new StelDiagnose(onderhouden, ids).uitvoeren({ kunstwerkId: 'KW1', bevinding: 'trilling', ernst: 'Kritiek' });
     await new StartOnderhoud(onderhouden, new FakeContractenReadModel(null), publisher, 'soepel').uitvoeren({ onderhoudId: onderhoudId!, datum: '2026-07-01' });
-    const antwoord = await app.inject({
-      method: 'POST',
-      url: '/api/extern/facturen',
-      payload: { invoiceNumber: 'INV-1', workOrderRef: onderhoudId, totalExVatCents: 200000, vatCents: 42000, currency: 'EUR', issuedAt: '2026-07-06' },
-    });
-    expect(antwoord.statusCode).toBe(201);
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/extern/facturen')
+      .send({ invoiceNumber: 'INV-1', workOrderRef: onderhoudId, totalExVatCents: 200000, vatCents: 42000, currency: 'EUR', issuedAt: '2026-07-06' });
+    expect(antwoord.status).toBe(201);
     const traject = (await onderhouden.zoekAlle())[0];
     expect(traject.facturen[0].bedrag.euro).toBe(2420);
   });
 
   it('geeft 422 bij een niet-EUR-factuur', async () => {
-    const antwoord = await app.inject({
-      method: 'POST',
-      url: '/api/extern/facturen',
-      payload: { invoiceNumber: 'INV-1', workOrderRef: 'O-1', totalExVatCents: 1, vatCents: 0, currency: 'USD', issuedAt: '2026-07-06' },
-    });
-    expect(antwoord.statusCode).toBe(422);
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/extern/facturen')
+      .send({ invoiceNumber: 'INV-1', workOrderRef: 'O-1', totalExVatCents: 1, vatCents: 0, currency: 'USD', issuedAt: '2026-07-06' });
+    expect(antwoord.status).toBe(422);
   });
 
   it('dient een contractaanvraag in en publiceert het event', async () => {
-    const antwoord = await app.inject({
-      method: 'POST',
-      url: '/api/contractaanvragen',
-      payload: { kunstwerkId: 'KW1', aanleiding: 'nieuw onderhoudsregime' },
-    });
-    expect(antwoord.statusCode).toBe(202);
+    const antwoord = await request(app.getHttpServer())
+      .post('/api/contractaanvragen')
+      .send({ kunstwerkId: 'KW1', aanleiding: 'nieuw onderhoudsregime' });
+    expect(antwoord.status).toBe(202);
     expect(publisher.types()).toContain('onderhoud.contractaanvraag.ingediend');
   });
 });
@@ -3484,36 +3921,112 @@ describe('schema- en extern-routes', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test -- schema-extern-routes`
+Run: `npm test -- schema-extern-controllers`
 Expected: FAIL — modules ontbreken.
 
-- [ ] **Step 3: Implementeer `schema-routes.ts`**
+- [ ] **Step 3: Implementeer de DTO's**
 
-`onderhoud/src/interface/http/schema-routes.ts`:
+`onderhoud/src/interface/http/dto/schema.dto.ts`:
 ```ts
-import type { FastifyInstance } from 'fastify';
-import type { MaakSchema, MaakSchemaCommand } from '../../application/schema/maak-schema.js';
-import type { SchemaRepository } from '../../domain/repositories.js';
-import { vertaalFout } from './fout-afhandeling.js';
+import { Type } from 'class-transformer';
+import { ArrayNotEmpty, IsArray, IsNotEmpty, IsString, ValidateNested } from 'class-validator';
 
-export interface SchemaRouteDeps {
-  maakSchema: MaakSchema;
-  schemas: SchemaRepository;
+export class GeplandMomentDto {
+  @IsString()
+  @IsNotEmpty()
+  datum: string;
+
+  @IsString()
+  @IsNotEmpty()
+  omschrijving: string;
 }
 
-export function registreerSchemaRoutes(app: FastifyInstance, deps: SchemaRouteDeps): void {
-  app.post<{ Body: MaakSchemaCommand }>('/api/schemas', async (req, reply) => {
-    try {
-      const uitkomst = await deps.maakSchema.uitvoeren(req.body);
-      reply.code(201).send(uitkomst);
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+export class MaakSchemaDto {
+  @IsString()
+  @IsNotEmpty()
+  kunstwerkId: string;
 
-  app.get('/api/schemas', async (_req, reply) => {
-    const schemas = await deps.schemas.zoekAlle();
-    reply.send(schemas.map((s) => ({
+  @IsString()
+  @IsNotEmpty()
+  periodeStart: string;
+
+  @IsString()
+  @IsNotEmpty()
+  periodeEind: string;
+
+  @IsArray()
+  @ArrayNotEmpty()
+  @ValidateNested({ each: true })
+  @Type(() => GeplandMomentDto)
+  momenten: GeplandMomentDto[];
+}
+```
+
+> `@ArrayNotEmpty` geeft al 400 bij een leeg `momenten`-array; de domeininvariant in `OnderhoudsSchema.maak` is de tweede verdedigingslinie.
+
+`onderhoud/src/interface/http/dto/extern.dto.ts`:
+```ts
+import { IsInt, IsNotEmpty, IsString } from 'class-validator';
+
+export class ExterneFactuurDto {
+  @IsString()
+  @IsNotEmpty()
+  invoiceNumber: string;
+
+  @IsString()
+  @IsNotEmpty()
+  workOrderRef: string;
+
+  @IsInt()
+  totalExVatCents: number;
+
+  @IsInt()
+  vatCents: number;
+
+  @IsString()
+  @IsNotEmpty()
+  currency: string;
+
+  @IsString()
+  @IsNotEmpty()
+  issuedAt: string;
+}
+
+export class ContractaanvraagDto {
+  @IsString()
+  @IsNotEmpty()
+  kunstwerkId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  aanleiding: string;
+}
+```
+
+- [ ] **Step 4: Implementeer `schema.controller.ts`**
+
+`onderhoud/src/interface/http/schema.controller.ts`:
+```ts
+import { Body, Controller, Get, Inject, Post } from '@nestjs/common';
+import { MaakSchema } from '../../application/schema/maak-schema';
+import { SCHEMA_REPOSITORY, type SchemaRepository } from '../../domain/repositories';
+import { MaakSchemaDto } from './dto/schema.dto';
+
+@Controller('schemas')
+export class SchemaController {
+  constructor(
+    private readonly maakSchema: MaakSchema,
+    @Inject(SCHEMA_REPOSITORY) private readonly schemas: SchemaRepository,
+  ) {}
+
+  @Post()
+  async maak(@Body() dto: MaakSchemaDto) {
+    return this.maakSchema.uitvoeren(dto);
+  }
+
+  @Get()
+  async lijst() {
+    return (await this.schemas.zoekAlle()).map((s) => ({
       schemaId: s.id.waarde,
       kunstwerkId: s.kunstwerkId.waarde,
       contractId: s.contractId.waarde,
@@ -3521,227 +4034,401 @@ export function registreerSchemaRoutes(app: FastifyInstance, deps: SchemaRouteDe
       periodeStart: s.periode.start.toISOString(),
       periodeEind: s.periode.eind.toISOString(),
       momenten: s.momenten.map((m) => ({ datum: m.datum.toISOString(), omschrijving: m.omschrijving })),
-    })));
-  });
+    }));
+  }
 }
 ```
 
-- [ ] **Step 4: Implementeer `extern-routes.ts`**
+- [ ] **Step 5: Implementeer `extern.controller.ts`**
 
-`onderhoud/src/interface/http/extern-routes.ts`:
+`onderhoud/src/interface/http/extern.controller.ts`:
 ```ts
-import type { FastifyInstance } from 'fastify';
-import type { OntvangFactuur } from '../../application/onderhoud/ontvang-factuur.js';
-import type { DienContractaanvraagIn, DienContractaanvraagInCommand } from '../../application/contractaanvraag/dien-contractaanvraag-in.js';
-import { AclFout, vertaalExterneFactuur, type ExterneFactuur } from '../../infrastructure/acl/aannemer-factuur-vertaler.js';
-import { vertaalFout } from './fout-afhandeling.js';
+import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { OntvangFactuur } from '../../application/onderhoud/ontvang-factuur';
+import { DienContractaanvraagIn } from '../../application/contractaanvraag/dien-contractaanvraag-in';
+import { vertaalExterneFactuur } from '../../infrastructure/acl/aannemer-factuur-vertaler';
+import { ContractaanvraagDto, ExterneFactuurDto } from './dto/extern.dto';
 
-export interface ExternRouteDeps {
-  ontvangFactuur: OntvangFactuur;
-  dienContractaanvraagIn: DienContractaanvraagIn;
-}
+@Controller()
+export class ExternController {
+  constructor(
+    private readonly ontvangFactuur: OntvangFactuur,
+    private readonly dienContractaanvraagIn: DienContractaanvraagIn,
+  ) {}
 
-export function registreerExternRoutes(app: FastifyInstance, deps: ExternRouteDeps): void {
-  app.post<{ Body: ExterneFactuur }>('/api/extern/facturen', async (req, reply) => {
-    try {
-      const command = vertaalExterneFactuur(req.body);
-      const uitkomst = await deps.ontvangFactuur.uitvoeren(command);
-      reply.code(201).send(uitkomst);
-    } catch (fout) {
-      if (fout instanceof AclFout) {
-        reply.code(422).send({ fout: fout.message });
-        return;
-      }
-      vertaalFout(fout, reply);
-    }
-  });
+  @Post('extern/facturen')
+  async factuur(@Body() dto: ExterneFactuurDto) {
+    const command = vertaalExterneFactuur(dto);
+    return this.ontvangFactuur.uitvoeren(command);
+  }
 
-  app.post<{ Body: DienContractaanvraagInCommand }>('/api/contractaanvragen', async (req, reply) => {
-    try {
-      await deps.dienContractaanvraagIn.uitvoeren(req.body);
-      reply.code(202).send({ status: 'Ingediend' });
-    } catch (fout) {
-      vertaalFout(fout, reply);
-    }
-  });
+  @Post('contractaanvragen')
+  @HttpCode(202)
+  async contractaanvraag(@Body() dto: ContractaanvraagDto) {
+    await this.dienContractaanvraagIn.uitvoeren(dto);
+    return { status: 'Ingediend' };
+  }
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+> `vertaalExterneFactuur` gooit `AclFout` → 422 via `DomeinFoutFilter`. `OntvangFactuur` gooit `DomeinFout('... niet gevonden')` → 404 als de `workOrderRef` naar een onbekend traject wijst.
 
-Run: `npm test -- schema-extern-routes`
+- [ ] **Step 6: Run test to verify it passes**
+
+Run: `npm test -- schema-extern-controllers`
 Expected: PASS (5 tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add onderhoud/src/interface/http onderhoud/test/interface/schema-extern-routes.test.ts
-git commit -m "feat(onderhoud): schema-, externe-factuur- en contractaanvraag-routes"
+git add onderhoud/src/interface/http onderhoud/test/interface/schema-extern-controllers.e2e-spec.ts
+git commit -m "feat(onderhoud): schema-, externe-factuur- en contractaanvraag-controllers"
 ```
 
 ---
 
-### Task 17: Interface — OpenAPI + composition root
+### Task 17: Modules-bedrading + OpenAPI + consumers opstarten
 
-Bedraad alles in `main.ts` en registreer OpenAPI. Breid `bouwApp` uit met de echte routes (`bouwApp` wordt hier `async`).
+Bedraad alle lagen in NestJS-modules: infra levert repos/read-models/publisher/id-generator onder de DI-tokens, application levert de use cases via `useFactory` (framework-vrije klassen), interface bundelt de controllers, en een `ConsumersService` start bij `OnModuleInit` de drie queue-consumers. `main.ts` krijgt Swagger + de globale exception-filter.
 
 **Files:**
-- Modify: `onderhoud/src/interface/http/app.ts`
-- Modify: `onderhoud/src/main.ts`
 - Create: `onderhoud/src/infrastructure/id-generator.ts`
+- Create: `onderhoud/src/infrastructure/infrastructure.module.ts`
+- Create: `onderhoud/src/application/application.module.ts`
+- Create: `onderhoud/src/interface/http/http-api.module.ts`
+- Create: `onderhoud/src/infrastructure/messaging/consumers.service.ts`
+- Create: `onderhoud/src/infrastructure/messaging/consumers.module.ts`
+- Modify: `onderhoud/src/app.module.ts`
+- Modify: `onderhoud/src/main.ts`
 
 **Interfaces:**
 - Consumes: alle voorgaande taken.
-- Produces: `class UuidIdGenerator implements IdGenerator`.
-- Produces: uitgebreide `AppDeps` met `storing?: StoringRouteDeps`, `onderhoud?: OnderhoudRouteDeps`, `schema?: SchemaRouteDeps`, `extern?: ExternRouteDeps`.
+- Produces: `class UuidIdGenerator implements IdGenerator`; `InfrastructureModule`, `ApplicationModule`, `HttpApiModule`, `ConsumersModule`, `ConsumersService`.
 
 - [ ] **Step 1: UUID-id-generator**
 
 `onderhoud/src/infrastructure/id-generator.ts`:
 ```ts
+import { Injectable } from '@nestjs/common';
 import { v4 as uuid } from 'uuid';
-import type { IdGenerator } from '../application/ports.js';
+import type { IdGenerator } from '../application/ports';
 
+@Injectable()
 export class UuidIdGenerator implements IdGenerator {
-  nieuw(): string { return uuid(); }
+  nieuw(): string {
+    return uuid();
+  }
 }
 ```
 
-- [ ] **Step 2: `app.ts` uitbreiden met routes + OpenAPI**
+- [ ] **Step 2: `infrastructure.module.ts`**
 
-`onderhoud/src/interface/http/app.ts`:
+`onderhoud/src/infrastructure/infrastructure.module.ts`:
 ```ts
-import Fastify, { type FastifyInstance } from 'fastify';
-import swagger from '@fastify/swagger';
-import swaggerUi from '@fastify/swagger-ui';
-import { registreerHealthRoute, type HealthChecks } from './health-route.js';
-import { registreerStoringRoutes, type StoringRouteDeps } from './storing-routes.js';
-import { registreerOnderhoudRoutes, type OnderhoudRouteDeps } from './onderhoud-routes.js';
-import { registreerSchemaRoutes, type SchemaRouteDeps } from './schema-routes.js';
-import { registreerExternRoutes, type ExternRouteDeps } from './extern-routes.js';
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { BekendKunstwerkEntity } from './db/entities/bekend-kunstwerk.entity';
+import { GeldendContractEntity } from './db/entities/geldend-contract.entity';
+import { OnderhoudseisEntity } from './db/entities/onderhoudseis.entity';
+import { VerwerktEventEntity } from './db/entities/verwerkt-event.entity';
+import { StoringEntity } from './db/entities/storing.entity';
+import { OnderhoudEntity } from './db/entities/onderhoud.entity';
+import { InspectieEntity } from './db/entities/inspectie.entity';
+import { FactuurEntity } from './db/entities/factuur.entity';
+import { OnderhoudsSchemaEntity } from './db/entities/onderhouds-schema.entity';
+import { TypeOrmStoringRepository } from './db/typeorm-storing-repository';
+import { TypeOrmOnderhoudRepository } from './db/typeorm-onderhoud-repository';
+import { TypeOrmSchemaRepository } from './db/typeorm-schema-repository';
+import { TypeOrmContractenReadModel, TypeOrmEventDedup, TypeOrmKunstwerkenReadModel } from './db/typeorm-read-models';
+import { UuidIdGenerator } from './id-generator';
+import { RabbitMqEventPublisher } from './messaging/rabbitmq-event-publisher';
+import { RABBITMQ_CONNECTIE, RabbitMqConnectie } from './messaging/rabbitmq-connectie';
+import { ONDERHOUD_REPOSITORY, SCHEMA_REPOSITORY, STORING_REPOSITORY } from '../domain/repositories';
+import { CONTRACTEN_READ_MODEL, EVENT_PUBLISHER, ID_GENERATOR, KUNSTWERKEN_READ_MODEL } from '../application/ports';
 
-export interface AppDeps {
-  health?: HealthChecks;
-  storing?: StoringRouteDeps;
-  onderhoud?: OnderhoudRouteDeps;
-  schema?: SchemaRouteDeps;
-  extern?: ExternRouteDeps;
-}
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([
+      BekendKunstwerkEntity,
+      GeldendContractEntity,
+      OnderhoudseisEntity,
+      VerwerktEventEntity,
+      StoringEntity,
+      OnderhoudEntity,
+      InspectieEntity,
+      FactuurEntity,
+      OnderhoudsSchemaEntity,
+    ]),
+  ],
+  providers: [
+    TypeOrmEventDedup,
+    TypeOrmKunstwerkenReadModel,
+    TypeOrmContractenReadModel,
+    { provide: STORING_REPOSITORY, useClass: TypeOrmStoringRepository },
+    { provide: ONDERHOUD_REPOSITORY, useClass: TypeOrmOnderhoudRepository },
+    { provide: SCHEMA_REPOSITORY, useClass: TypeOrmSchemaRepository },
+    { provide: KUNSTWERKEN_READ_MODEL, useExisting: TypeOrmKunstwerkenReadModel },
+    { provide: CONTRACTEN_READ_MODEL, useExisting: TypeOrmContractenReadModel },
+    { provide: ID_GENERATOR, useClass: UuidIdGenerator },
+    {
+      provide: EVENT_PUBLISHER,
+      inject: [RABBITMQ_CONNECTIE],
+      useFactory: (connectie: RabbitMqConnectie) => new RabbitMqEventPublisher(connectie.kanaal),
+    },
+  ],
+  exports: [
+    TypeOrmEventDedup,
+    TypeOrmKunstwerkenReadModel,
+    TypeOrmContractenReadModel,
+    STORING_REPOSITORY,
+    ONDERHOUD_REPOSITORY,
+    SCHEMA_REPOSITORY,
+    KUNSTWERKEN_READ_MODEL,
+    CONTRACTEN_READ_MODEL,
+    ID_GENERATOR,
+    EVENT_PUBLISHER,
+  ],
+})
+export class InfrastructureModule {}
+```
 
-export async function bouwApp(deps: AppDeps = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true });
-  await app.register(swagger, {
-    openapi: { info: { title: 'Onderhoud-service', version: '0.1.0' } },
-  });
-  await app.register(swaggerUi, { routePrefix: '/api/docs' });
+- [ ] **Step 3: `application.module.ts`**
 
-  registreerHealthRoute(app, deps.health);
-  if (deps.storing) registreerStoringRoutes(app, deps.storing);
-  if (deps.onderhoud) registreerOnderhoudRoutes(app, deps.onderhoud);
-  if (deps.schema) registreerSchemaRoutes(app, deps.schema);
-  if (deps.extern) registreerExternRoutes(app, deps.extern);
-  return app;
+`onderhoud/src/application/application.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { InfrastructureModule } from '../infrastructure/infrastructure.module';
+import { APP_CONFIG, type AppConfig } from '../infrastructure/config/config';
+import { ONDERHOUD_REPOSITORY, SCHEMA_REPOSITORY, STORING_REPOSITORY } from '../domain/repositories';
+import type { OnderhoudRepository, SchemaRepository, StoringRepository } from '../domain/repositories';
+import { CONTRACTEN_READ_MODEL, EVENT_PUBLISHER, ID_GENERATOR, KUNSTWERKEN_READ_MODEL } from './ports';
+import type { ContractenReadModel, EventPublisher, IdGenerator, KunstwerkenReadModel } from './ports';
+import { MeldStoring } from './storing/meld-storing';
+import { StelDiagnose } from './diagnose/stel-diagnose';
+import { StartOnderhoud } from './onderhoud/start-onderhoud';
+import { RegistreerInspectie } from './onderhoud/registreer-inspectie';
+import { RondOnderhoudAf } from './onderhoud/rond-onderhoud-af';
+import { OntvangFactuur } from './onderhoud/ontvang-factuur';
+import { KeurFactuurGoed } from './onderhoud/keur-factuur-goed';
+import { MaakSchema } from './schema/maak-schema';
+import { DienContractaanvraagIn } from './contractaanvraag/dien-contractaanvraag-in';
+
+@Module({
+  imports: [InfrastructureModule],
+  providers: [
+    {
+      provide: MeldStoring,
+      inject: [STORING_REPOSITORY, ONDERHOUD_REPOSITORY, EVENT_PUBLISHER, KUNSTWERKEN_READ_MODEL, ID_GENERATOR, APP_CONFIG],
+      useFactory: (
+        storingen: StoringRepository,
+        onderhouden: OnderhoudRepository,
+        publisher: EventPublisher,
+        kunstwerken: KunstwerkenReadModel,
+        ids: IdGenerator,
+        config: AppConfig,
+      ) => new MeldStoring(storingen, onderhouden, publisher, kunstwerken, ids, config.validatie),
+    },
+    {
+      provide: StelDiagnose,
+      inject: [ONDERHOUD_REPOSITORY, ID_GENERATOR],
+      useFactory: (onderhouden: OnderhoudRepository, ids: IdGenerator) => new StelDiagnose(onderhouden, ids),
+    },
+    {
+      provide: StartOnderhoud,
+      inject: [ONDERHOUD_REPOSITORY, CONTRACTEN_READ_MODEL, EVENT_PUBLISHER, APP_CONFIG],
+      useFactory: (onderhouden: OnderhoudRepository, contracten: ContractenReadModel, publisher: EventPublisher, config: AppConfig) =>
+        new StartOnderhoud(onderhouden, contracten, publisher, config.validatie),
+    },
+    {
+      provide: RegistreerInspectie,
+      inject: [ONDERHOUD_REPOSITORY, ID_GENERATOR],
+      useFactory: (onderhouden: OnderhoudRepository, ids: IdGenerator) => new RegistreerInspectie(onderhouden, ids),
+    },
+    {
+      provide: RondOnderhoudAf,
+      inject: [ONDERHOUD_REPOSITORY, STORING_REPOSITORY, EVENT_PUBLISHER],
+      useFactory: (onderhouden: OnderhoudRepository, storingen: StoringRepository, publisher: EventPublisher) =>
+        new RondOnderhoudAf(onderhouden, storingen, publisher),
+    },
+    {
+      provide: OntvangFactuur,
+      inject: [ONDERHOUD_REPOSITORY, ID_GENERATOR],
+      useFactory: (onderhouden: OnderhoudRepository, ids: IdGenerator) => new OntvangFactuur(onderhouden, ids),
+    },
+    {
+      provide: KeurFactuurGoed,
+      inject: [ONDERHOUD_REPOSITORY],
+      useFactory: (onderhouden: OnderhoudRepository) => new KeurFactuurGoed(onderhouden),
+    },
+    {
+      provide: MaakSchema,
+      inject: [SCHEMA_REPOSITORY, CONTRACTEN_READ_MODEL, ID_GENERATOR, APP_CONFIG],
+      useFactory: (schemas: SchemaRepository, contracten: ContractenReadModel, ids: IdGenerator, config: AppConfig) =>
+        new MaakSchema(schemas, contracten, ids, config.validatie),
+    },
+    {
+      provide: DienContractaanvraagIn,
+      inject: [EVENT_PUBLISHER],
+      useFactory: (publisher: EventPublisher) => new DienContractaanvraagIn(publisher),
+    },
+  ],
+  exports: [
+    MeldStoring,
+    StelDiagnose,
+    StartOnderhoud,
+    RegistreerInspectie,
+    RondOnderhoudAf,
+    OntvangFactuur,
+    KeurFactuurGoed,
+    MaakSchema,
+    DienContractaanvraagIn,
+  ],
+})
+export class ApplicationModule {}
+```
+
+- [ ] **Step 4: `http-api.module.ts`**
+
+`onderhoud/src/interface/http/http-api.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { ApplicationModule } from '../../application/application.module';
+import { InfrastructureModule } from '../../infrastructure/infrastructure.module';
+import { StoringController } from './storing.controller';
+import { OnderhoudController } from './onderhoud.controller';
+import { SchemaController } from './schema.controller';
+import { ExternController } from './extern.controller';
+import { DomeinFoutFilter } from './domein-fout.filter';
+
+@Module({
+  imports: [ApplicationModule, InfrastructureModule],
+  controllers: [StoringController, OnderhoudController, SchemaController, ExternController],
+  providers: [{ provide: APP_FILTER, useClass: DomeinFoutFilter }],
+})
+export class HttpApiModule {}
+```
+
+> De controllers hebben de repo-tokens (`STORING_REPOSITORY`, `ONDERHOUD_REPOSITORY`, `SCHEMA_REPOSITORY`) nodig voor hun GET-endpoints; die komen uit `InfrastructureModule`. De use cases komen uit `ApplicationModule`.
+
+- [ ] **Step 5: `consumers.service.ts` + `consumers.module.ts`**
+
+`onderhoud/src/infrastructure/messaging/consumers.service.ts`:
+```ts
+import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
+import { RABBITMQ_CONNECTIE, RabbitMqConnectie } from './rabbitmq-connectie';
+import { startConsumer } from './consumer-helpers';
+import { MONITORING_BINDINGS, MONITORING_QUEUE, MonitoringIncidentVerwerker } from './monitoring-incident-consumer';
+import { CONTRACT_BINDINGS, CONTRACT_QUEUE, ContractVerwerker } from './contract-consumer';
+import { BEHEER_BINDINGS, BEHEER_QUEUE, BeheerVerwerker } from './beheer-consumer';
+import { StelDiagnose } from '../../application/diagnose/stel-diagnose';
+import { TypeOrmContractenReadModel, TypeOrmEventDedup, TypeOrmKunstwerkenReadModel } from '../db/typeorm-read-models';
+
+@Injectable()
+export class ConsumersService implements OnModuleInit {
+  constructor(
+    @Inject(RABBITMQ_CONNECTIE) private readonly connectie: RabbitMqConnectie,
+    private readonly stelDiagnose: StelDiagnose,
+    private readonly kunstwerken: TypeOrmKunstwerkenReadModel,
+    private readonly contracten: TypeOrmContractenReadModel,
+    private readonly dedup: TypeOrmEventDedup,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    const monitoring = new MonitoringIncidentVerwerker(this.stelDiagnose, this.dedup);
+    const contract = new ContractVerwerker(this.contracten, this.dedup);
+    const beheer = new BeheerVerwerker(this.kunstwerken, this.dedup);
+    await startConsumer(this.connectie, MONITORING_QUEUE, MONITORING_BINDINGS, (env) => monitoring.verwerk(env));
+    await startConsumer(this.connectie, CONTRACT_QUEUE, CONTRACT_BINDINGS, (env) => contract.verwerk(env));
+    await startConsumer(this.connectie, BEHEER_QUEUE, BEHEER_BINDINGS, (env) => beheer.verwerk(env));
+  }
 }
 ```
 
-> **Let op:** `bouwApp` is nu `async`; de aanroep in `main.ts` wordt `await bouwApp(...)`.
+`onderhoud/src/infrastructure/messaging/consumers.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { ApplicationModule } from '../../application/application.module';
+import { InfrastructureModule } from '../infrastructure.module';
+import { ConsumersService } from './consumers.service';
 
-- [ ] **Step 3: Composition root in `main.ts`**
+@Module({
+  imports: [ApplicationModule, InfrastructureModule],
+  providers: [ConsumersService],
+})
+export class ConsumersModule {}
+```
+
+- [ ] **Step 6: `app.module.ts` compleet maken**
+
+`onderhoud/src/app.module.ts`:
+```ts
+import { Module } from '@nestjs/common';
+import { AppConfigModule } from './infrastructure/config/config.module';
+import { DatabaseModule } from './infrastructure/db/database.module';
+import { MessagingModule } from './infrastructure/messaging/messaging.module';
+import { InfrastructureModule } from './infrastructure/infrastructure.module';
+import { ApplicationModule } from './application/application.module';
+import { HttpApiModule } from './interface/http/http-api.module';
+import { ConsumersModule } from './infrastructure/messaging/consumers.module';
+import { HealthModule } from './interface/health/health.module';
+
+@Module({
+  imports: [
+    AppConfigModule,
+    DatabaseModule,
+    MessagingModule,
+    InfrastructureModule,
+    ApplicationModule,
+    HttpApiModule,
+    ConsumersModule,
+    HealthModule,
+  ],
+})
+export class AppModule {}
+```
+
+- [ ] **Step 7: `main.ts` — Swagger + globale filter**
 
 `onderhoud/src/main.ts`:
 ```ts
-import { laadConfig } from './infrastructure/config.js';
-import { bouwApp } from './interface/http/app.js';
-import { maakPrismaClient } from './infrastructure/db/prisma-client.js';
-import { RabbitMqConnectie } from './infrastructure/messaging/rabbitmq-connectie.js';
-import { RabbitMqEventPublisher } from './infrastructure/messaging/rabbitmq-event-publisher.js';
-import { PrismaStoringRepository } from './infrastructure/db/prisma-storing-repository.js';
-import { PrismaOnderhoudRepository } from './infrastructure/db/prisma-onderhoud-repository.js';
-import { PrismaSchemaRepository } from './infrastructure/db/prisma-schema-repository.js';
-import { PrismaContractenReadModel, PrismaEventDedup, PrismaKunstwerkenReadModel } from './infrastructure/db/prisma-read-models.js';
-import { UuidIdGenerator } from './infrastructure/id-generator.js';
-import { startConsumer } from './infrastructure/messaging/consumer-helpers.js';
-import { MONITORING_BINDINGS, MONITORING_QUEUE, MonitoringIncidentVerwerker } from './infrastructure/messaging/monitoring-incident-consumer.js';
-import { CONTRACT_BINDINGS, CONTRACT_QUEUE, ContractVerwerker } from './infrastructure/messaging/contract-consumer.js';
-import { BEHEER_BINDINGS, BEHEER_QUEUE, BeheerVerwerker } from './infrastructure/messaging/beheer-consumer.js';
-import { MeldStoring } from './application/storing/meld-storing.js';
-import { StelDiagnose } from './application/diagnose/stel-diagnose.js';
-import { StartOnderhoud } from './application/onderhoud/start-onderhoud.js';
-import { RegistreerInspectie } from './application/onderhoud/registreer-inspectie.js';
-import { RondOnderhoudAf } from './application/onderhoud/rond-onderhoud-af.js';
-import { OntvangFactuur } from './application/onderhoud/ontvang-factuur.js';
-import { KeurFactuurGoed } from './application/onderhoud/keur-factuur-goed.js';
-import { MaakSchema } from './application/schema/maak-schema.js';
-import { DienContractaanvraagIn } from './application/contractaanvraag/dien-contractaanvraag-in.js';
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+import { APP_CONFIG, type AppConfig } from './infrastructure/config/config';
 
-async function start(): Promise<void> {
-  const config = laadConfig(process.env);
-  const prisma = maakPrismaClient(config.databaseUrl);
-  const rabbit = await RabbitMqConnectie.verbind(config.rabbitmqUrl);
+async function bootstrap(): Promise<void> {
+  const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
+  app.setGlobalPrefix('api', { exclude: ['health'] });
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
-  const ids = new UuidIdGenerator();
-  const publisher = new RabbitMqEventPublisher(rabbit.kanaal);
-  const storingRepo = new PrismaStoringRepository(prisma);
-  const onderhoudRepo = new PrismaOnderhoudRepository(prisma);
-  const schemaRepo = new PrismaSchemaRepository(prisma);
-  const kunstwerken = new PrismaKunstwerkenReadModel(prisma);
-  const contracten = new PrismaContractenReadModel(prisma);
-  const dedup = new PrismaEventDedup(prisma);
+  const swaggerConfig = new DocumentBuilder().setTitle('Onderhoud-service').setVersion('0.1.0').build();
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api/docs', app, document);
 
-  const stelDiagnose = new StelDiagnose(onderhoudRepo, ids);
-
-  const app = await bouwApp({
-    health: {
-      db: async () => { await prisma.$queryRaw`SELECT 1`; return true; },
-      broker: async () => rabbit.isVerbonden(),
-    },
-    storing: {
-      meldStoring: new MeldStoring(storingRepo, onderhoudRepo, publisher, kunstwerken, ids, config.validatie),
-      storingen: storingRepo,
-    },
-    onderhoud: {
-      stelDiagnose,
-      start: new StartOnderhoud(onderhoudRepo, contracten, publisher, config.validatie),
-      inspecteer: new RegistreerInspectie(onderhoudRepo, ids),
-      rondAf: new RondOnderhoudAf(onderhoudRepo, storingRepo, publisher),
-      ontvangFactuur: new OntvangFactuur(onderhoudRepo, ids),
-      keurFactuurGoed: new KeurFactuurGoed(onderhoudRepo),
-      onderhouden: onderhoudRepo,
-    },
-    schema: {
-      maakSchema: new MaakSchema(schemaRepo, contracten, ids, config.validatie),
-      schemas: schemaRepo,
-    },
-    extern: {
-      ontvangFactuur: new OntvangFactuur(onderhoudRepo, ids),
-      dienContractaanvraagIn: new DienContractaanvraagIn(publisher),
-    },
-  });
-
-  const monitoringVerwerker = new MonitoringIncidentVerwerker(stelDiagnose, dedup);
-  const contractVerwerker = new ContractVerwerker(contracten, dedup);
-  const beheerVerwerker = new BeheerVerwerker(kunstwerken, dedup);
-  await startConsumer(rabbit, MONITORING_QUEUE, MONITORING_BINDINGS, (env) => monitoringVerwerker.verwerk(env));
-  await startConsumer(rabbit, CONTRACT_QUEUE, CONTRACT_BINDINGS, (env) => contractVerwerker.verwerk(env));
-  await startConsumer(rabbit, BEHEER_QUEUE, BEHEER_BINDINGS, (env) => beheerVerwerker.verwerk(env));
-
-  await app.listen({ host: '0.0.0.0', port: config.poort });
+  const config = app.get<AppConfig>(APP_CONFIG);
+  await app.listen(config.poort, '0.0.0.0');
 }
 
-start().catch((fout) => {
+bootstrap().catch((fout) => {
   console.error('Opstarten mislukt', fout);
   process.exit(1);
 });
 ```
 
-- [ ] **Step 4: Volledige build + tests**
+> `DomeinFoutFilter` staat al globaal geregistreerd via `APP_FILTER` in `HttpApiModule`; in `main.ts` is geen `useGlobalFilters` meer nodig. `enableShutdownHooks()` zorgt dat `MessagingModule.onApplicationShutdown` de broker netjes sluit.
+
+- [ ] **Step 8: Volledige build + tests**
 
 Run: `npm run build && npm test`
-Expected: build zonder fouten; alle tests groen.
+Expected: build zonder fouten; alle tests groen (config, domein, application, infra-mappers, consumers, ACL, controllers-e2e).
 
-- [ ] **Step 5: Manuele smoke-test**
+- [ ] **Step 9: Manuele smoke-test**
 
-Run: repo-root `docker compose up -d postgres rabbitmq`; `onderhoud/` `npx prisma migrate deploy` (met lokale `DATABASE_URL`); `npx tsx src/main.ts`.
+Run: repo-root `docker compose up -d postgres rabbitmq`; in `onderhoud/` `npm run migration:run` (met lokale `DATABASE_URL`); `npm run start`.
 Verifieer:
 ```bash
 curl -s localhost:8003/health
@@ -3753,13 +4440,13 @@ curl -s -X POST localhost:8003/api/onderhoud/<OID>/inspecties -H 'content-type: 
 curl -s -X POST localhost:8003/api/onderhoud/<OID>/afronden -H 'content-type: application/json' -d '{"resultaat":"hersteld","datum":"2026-07-10"}'
 curl -s localhost:8003/api/onderhoud
 ```
-Expected: health 200; POST's 200/201; `GET /api/onderhoud` toont het afgeronde traject. Controleer in de RabbitMQ-UI (`http://localhost:15672`) dat er events op `rws.events` verschenen (bind een tijdelijke queue op `onderhoud.#`) en dat de queues `onderhoud.monitoring-incident`, `onderhoud.contract` en `onderhoud.beheer` bestaan. Open `http://localhost:8003/api/docs` voor de OpenAPI-UI.
+Expected: health 200; POST's 200/201; `GET /api/onderhoud` toont het afgeronde traject. Controleer in de RabbitMQ-UI (`http://localhost:15672`) dat er events op `rws.events` staan (bind een tijdelijke queue op `onderhoud.#`) en dat de queues `onderhoud.monitoring-incident`, `onderhoud.contract` en `onderhoud.beheer` bestaan. Open `http://localhost:8003/api/docs` voor de OpenAPI-UI.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add onderhoud/src/interface/http/app.ts onderhoud/src/main.ts onderhoud/src/infrastructure/id-generator.ts
-git commit -m "feat(onderhoud): OpenAPI en composition root — service volledig bedraad"
+git add onderhoud/src
+git commit -m "feat(onderhoud): modules-bedrading, OpenAPI en consumers — service volledig bedraad"
 ```
 
 ---
@@ -3773,18 +4460,16 @@ git commit -m "feat(onderhoud): OpenAPI en composition root — service volledig
 
 **Interfaces:** geen code-interfaces; leveren een draaiende container.
 
-- [ ] **Step 1: Dockerfile (multi-stage Node)**
+- [ ] **Step 1: Dockerfile (multi-stage NestJS)**
 
 Vervang de inhoud van `onderhoud/Dockerfile`:
 ```dockerfile
-# Onderhoud-service — Node.js (TypeScript) multi-stage
+# Onderhoud-service — NestJS (TypeScript) multi-stage
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
-COPY prisma ./prisma
-RUN npx prisma generate
-COPY tsconfig.json ./
+COPY tsconfig*.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
 
@@ -3793,12 +4478,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
-COPY prisma ./prisma
-RUN npx prisma generate
 COPY --from=build /app/dist ./dist
 EXPOSE 8003
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+CMD ["node", "dist/main.js"]
 ```
+
+> Migraties draaien automatisch bij het opstarten dankzij `migrationsRun: true` in `DatabaseModule` — de gecompileerde migratie-`.js` staan in `dist/infrastructure/db/migrations/` en de `data-source`-glob pikt ze daar op. Geen aparte migrate-stap in het `CMD` nodig.
 
 - [ ] **Step 2: `.dockerignore`**
 
@@ -3812,7 +4497,7 @@ test
 
 - [ ] **Step 3: Compose-blok activeren**
 
-In `docker-compose.yml` (repo-root): verwijder de `#`-comments van het `onderhoud`-blok, zodat het actief wordt. Laat de andere service-blokken ongemoeid.
+In `docker-compose.yml` (repo-root): verwijder de `#`-comments van het `onderhoud`-blok, zodat het actief wordt. Laat de andere service-blokken ongemoeid. Controleer dat het blok `SERVICE_PORT=8003`, `DATABASE_URL` (host `postgres`), `RABBITMQ_URL` (host `rabbitmq`) en `depends_on: [postgres, rabbitmq]` zet, en poort `8003:8003` mapt.
 
 - [ ] **Step 4: `.env` aanmaken**
 
@@ -3823,7 +4508,7 @@ Run (in `onderhoud/`): `cp .env.example .env` (laat de hostnamen op `postgres`/`
 Run (repo-root): `docker compose up --build onderhoud postgres rabbitmq`
 Verifieer in een tweede shell:
 ```bash
-curl -s localhost:8003/health         # {"status":"ok","db":true,"broker":true}
+curl -s localhost:8003/health         # status ok, database up, broker up
 ```
 Herhaal daarna de POST-flow uit Task 17 tegen `localhost:8003`. Expected: 200/201-antwoorden, traject zichtbaar via `GET /api/onderhoud`, events op `rws.events`. Publiceer als extra check via de RabbitMQ-UI een testbericht op `rws.events` met routing key `monitoring.incident.aangemaakt` en body:
 ```json
@@ -3842,14 +4527,19 @@ git commit -m "feat(onderhoud): Docker-image en compose-integratie"
 
 ## Self-Review (uitgevoerd)
 
-**Spec-dekking:** alle 4 gepubliceerde events (Tasks 6/7/10/12), beide instappunten MeldStoring + StelDiagnose (9), traject met StartOnderhoud/AfrondenOnderhoud (7/10), OnderhoudsSchema met gegunde aannemer (8/10), Inspectie + Factuur (7/10), contractaanvraag naar Contract (10/16), ACL externe aannemers (14/16), idempotente consumers voor `monitoring.incident.aangemaakt` / `contract.onderhoudscontract.gegund` / `beheer.onderhoudseisen.vastgesteld` / `beheer.kunstwerk.*` (13), REST `GET /api/onderhoud` + `POST /api/storingen` uit de README plus traject-/schema-routes (15/16), OpenAPI + health + Docker (17/18). ✔
-**Fase-grens:** strenge validatie als default, reageren op `beheer.kunstwerk.buitengebruikgesteld` richting lopende trajecten, AannemerId-registratie met eigen aggregate, herplannen van schema-momenten, Testcontainers en Dokploy zitten bewust **niet** in dit plan (Fase 2). ✔
-**Type-consistentie:** `trekEventsLeeg`, `OnderhoudDomainEvent`, `Bedrag.centen/euro`, `ernstVan`, `vereistOnderhoud`, repo-interfaces in `domain/repositories.ts` en de ports in `application/ports.ts` worden vóór gebruik gedefinieerd; route-deps (Task 15/16) matchen de use-case-constructors uit Tasks 9/10. ✔
+**Stack-conformiteit (`docs/vervolgstappen.md`):** Fastify → **NestJS** (Task 1-3, 15-17), Prisma → **TypeORM** (Task 2, 11, 13). Poort 8003, DB `onderhoud_db`, event-envelope en `/health` identiek aan de conventies. ✔
+**Spec-dekking:** alle 4 gepubliceerde events (Tasks 6/7/10/12), beide instappunten MeldStoring + StelDiagnose (9), traject met StartOnderhoud/AfrondenOnderhoud (7/10), OnderhoudsSchema met gegunde aannemer (8/10), Inspectie + Factuur (7/10), contractaanvraag naar Contract (10/16), ACL externe aannemers (14/16), idempotente consumers voor `monitoring.incident.aangemaakt` / `contract.onderhoudscontract.*` / `beheer.onderhoudseisen.vastgesteld` / `beheer.kunstwerk.*` (13/17), REST `GET /api/onderhoud` + `POST /api/storingen` uit de README plus traject-/schema-/extern-routes (15/16), OpenAPI + health + Docker (17/18). ✔
+**Laagscheiding:** `domain` (Tasks 4-8) en `application` (9-10) bevatten **geen** NestJS/TypeORM-imports of decorators; alleen `infrastructure` (entities/repos/read-models/publisher/consumers) en `interface` (controllers/DTO's/filter/health) kennen het framework. Use cases worden via `useFactory` bedraad zodat ze framework-vrij blijven. ✔
+**Fase-grens:** strenge validatie als default, reageren op `beheer.kunstwerk.buitengebruikgesteld` richting lopende trajecten, AannemerId als eigen aggregate, herplannen van schema-momenten, Testcontainers en Dokploy zitten bewust **niet** in dit plan (Fase 2, zie `docs/vervolgstappen.md`). ✔
+**Type-consistentie:** `trekEventsLeeg`, `OnderhoudDomainEvent`, `Bedrag.centen/euro`, `ernstVan`, `vereistOnderhoud`, de DI-tokens (`STORING_REPOSITORY`, `ONDERHOUD_REPOSITORY`, `SCHEMA_REPOSITORY`, `EVENT_PUBLISHER`, `KUNSTWERKEN_READ_MODEL`, `CONTRACTEN_READ_MODEL`, `ID_GENERATOR`, `RABBITMQ_CONNECTIE`, `APP_CONFIG`) worden vóór gebruik gedefinieerd; de controller-provider-namen (Task 15/16) matchen de use-case-klassen uit Tasks 9/10 en de `useFactory`-providers in Task 17. ✔
 
 ## Aandachtspunten bij uitvoering
 
-- `bouwApp` wordt in Task 17 `async`; werk de aanroep in `main.ts` bij.
-- Prisma-migraties draaien lokaal met `DATABASE_URL` op host `localhost`; in de container gebruikt compose host `postgres`.
-- De drie consumers delen één `PrismaEventDedup` (tabel `VerwerktEvent`) — dedupe is dus service-breed op `eventId`.
+- **Geen `type: module`.** NestJS + TypeORM + `ts-jest` draaien op CommonJS; imports gebruiken géén `.js`-extensie (anders dan de Prisma/ESM-variant van Contract).
+- **Decorators + metadata:** `tsconfig` moet `emitDecoratorMetadata` + `experimentalDecorators` aan hebben (Task 1) — anders faalt de NestJS-DI en TypeORM-kolomtypering. Daarom Jest/`ts-jest`, niet Vitest.
+- **`strictPropertyInitialization: false`** is nodig voor entity-/controller-velden die door TypeORM/DI worden gevuld; de rest van `strict` blijft aan.
+- **Migraties** draaien lokaal met `DATABASE_URL` op host `localhost` (CLI), in de container automatisch via `migrationsRun: true` (host `postgres`). Genereer eerst `InitReadModel` (Task 2) en daarna `DomeinTabellen` (Task 11).
+- **`eager: true`** op `Onderhoud.inspecties`/`.facturen` laadt kinderen mee; `cascade: true` persisteert ze bij `save`. In Fase 1 worden ze alleen toegevoegd, dus orphan-removal is niet nodig.
+- De drie consumers delen één `TypeOrmEventDedup` (tabel `verwerkt_event`) — dedupe is service-breed op `eventId`.
 - `MeldStoring` gebruikt de `IdGenerator` twee keer bij Hoog/Kritiek (storing + traject); de tests rekenen daarop (`X-1`/`X-2`).
-
+- Controllers injecteren zowel use cases (uit `ApplicationModule`) als repo-tokens (uit `InfrastructureModule`); `HttpApiModule` importeert beide.
