@@ -1,18 +1,23 @@
 # Frontend-demo-prompt
 
-Geef de prompt hieronder (alles tussen de lijnen) aan een AI-tool naar keuze
-(Claude, ChatGPT, v0, Lovable, Claude Code, Cursor, …) om een demo-frontend te
-genereren die alle vier de services aanstuurt. Iedereen mag zijn eigen stijl/tool
-kiezen — de API-contracten en de proxy-config in de prompt zorgen dat het werkt.
+Geef de prompt hieronder (alles tussen de lijnen) aan een AI-tool die in de repo kan
+werken (Claude Code, Cursor, …) om het demo-dashboard te genereren. De frontend hoort
+**in deze repo** in de map `frontend/` en wordt uiteindelijk als eigen Dokploy-app
+onder een eigen (sub)domein gedeployed — zie
+[het Dokploy-plan §3b](superpowers/plans/2026-07-02-dokploy-implementatieplan.md).
 
-**Vereisten om de gegenereerde frontend te draaien:**
+**Gebruik:**
 1. De stack draait lokaal: `docker compose up` in de repo-root (alle vier `/health` groen).
-2. Node 22 geïnstalleerd; `npm install && npm run dev` in de gegenereerde frontend-map.
-3. De frontend NIET in deze repo committen — het is een los demo-project
-   (of zet hem in een eigen map/repo).
+2. Plak de prompt in je AI-tool, geopend in de repo-root. De tool maakt `frontend/` aan
+   (incl. Dockerfile, nginx-config en compose-blok).
+3. Ontwikkelen: `cd frontend && npm install && npm run dev` (Vite, poort 5173).
+   Meedraaien in de stack: `docker compose up --build frontend` → http://localhost:8005.
+4. Committen op een eigen branch (`frontend`), PR naar `main` zoals altijd.
 
 > Waarom de proxy verplicht is: de services sturen geen CORS-headers, dus een browser
-> mag niet rechtstreeks naar `localhost:8001-8004`. De Vite-proxy in de prompt lost dat op.
+> mag niet rechtstreeks naar `localhost:8001-8004`. Lokaal lost de Vite-dev-proxy dat
+> op; in Docker/Dokploy doet nginx hetzelfde. De frontend gebruikt daardoor overal
+> dezelfde relatieve paden.
 
 ---
 
@@ -23,12 +28,19 @@ infrastructuurbeheer. Het dashboard is de "regiekamer" voor een live demo tijden
 presentatie: één scherm waarmee we het hele verhaal klikbaar doorlopen en waarop je
 ZIET dat de services via events (RabbitMQ) met elkaar praten.
 
-## Tech-eisen
-- Vite + React (TypeScript mag), styling vrij (Tailwind prima). Geen backend, geen auth.
-- De services hebben GEEN CORS-headers. Gebruik daarom EXACT deze Vite-proxy en laat
-  alle fetches naar relatieve paden gaan (/beheer/..., /monitoring/..., enz.):
+Je werkt in de monorepo van het project. Maak de frontend aan in de map `frontend/`
+in de repo-root. De frontend is GEEN bounded context: geen bedrijfsregels, alleen
+presentatie + API-aanroepen. Raak de andere mappen niet aan, behalve het uncommenten/
+toevoegen van het frontend-blok in docker-compose.yml (zie onder).
 
-  // vite.config.ts
+## Tech-eisen
+- Vite + React (TypeScript mag), styling vrij (Tailwind prima). Geen backend-code,
+  geen auth.
+- De services hebben GEEN CORS-headers. Alle fetches gaan daarom naar RELATIEVE paden
+  (/beheer/..., /monitoring/..., enz.); een proxy stuurt ze door. Twee omgevingen,
+  zelfde paden:
+
+  (a) Lokaal ontwikkelen — Vite-dev-proxy in vite.config.ts:
   server: {
     proxy: {
       '/contract':   { target: 'http://127.0.0.1:8001', changeOrigin: true, rewrite: p => p.replace(/^\/contract/, '') },
@@ -38,7 +50,50 @@ ZIET dat de services via events (RabbitMQ) met elkaar praten.
     },
   }
 
-  Dus: GET /beheer/api/kunstwerken komt uit bij http://127.0.0.1:8004/api/kunstwerken.
+  (b) Docker/Dokploy — nginx serveert de statische build en proxyt dezelfde paden naar
+  de interne servicenamen. Maak deze twee bestanden in frontend/:
+
+  frontend/nginx.conf.template:
+    server {
+      listen 80;
+      location = /health { return 200 'ok'; add_header Content-Type text/plain; }
+      location /contract/   { proxy_pass ${CONTRACT_URL}/; }
+      location /monitoring/ { proxy_pass ${MONITORING_URL}/; }
+      location /onderhoud/  { proxy_pass ${ONDERHOUD_URL}/; }
+      location /beheer/     { proxy_pass ${BEHEER_URL}/; }
+      location / { root /usr/share/nginx/html; try_files $uri /index.html; }
+    }
+
+  frontend/Dockerfile (multi-stage; het nginx-image draait envsubst automatisch op
+  /etc/nginx/templates/*.template):
+    FROM node:22-alpine AS build
+    WORKDIR /app
+    COPY package*.json ./
+    RUN npm ci
+    COPY . .
+    RUN npm run build
+    FROM nginx:alpine
+    COPY --from=build /app/dist /usr/share/nginx/html
+    COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+    EXPOSE 80
+
+  En voeg dit blok toe aan de root-docker-compose.yml (zelfde stijl als de services):
+    frontend:
+      build: ./frontend
+      container_name: rws-frontend
+      environment:
+        CONTRACT_URL: http://contract:8001
+        MONITORING_URL: http://monitoring:8002
+        ONDERHOUD_URL: http://onderhoud:8003
+        BEHEER_URL: http://beheer:8004
+      ports: ["8005:80"]
+      depends_on: [contract, monitoring, onderhoud, beheer]
+      networks: [rws-net]
+
+  Dus: GET /beheer/api/kunstwerken komt lokaal (dev) uit bij http://127.0.0.1:8004
+  en in Docker/Dokploy bij ${BEHEER_URL} — de frontend-code merkt het verschil niet.
+  Op Dokploy wordt dit een eigen Application met een eigen subdomein; de vier
+  *_URL-env-vars wijzen daar naar de interne hostnamen van de service-apps.
 - Alle data verandert door events tussen de services: gebruik POLLING (elke 2 s) op de
   lijst-endpoints zodat wijzigingen "vanzelf" zichtbaar worden. Highlight nieuwe rijen
   even (flash/animatie) — dat is het demo-effect.

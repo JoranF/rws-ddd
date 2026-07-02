@@ -18,12 +18,17 @@ Standaard-env per service (zie `docs/conventions.md` §5): `SERVICE_PORT`, `DATA
 `RABBITMQ_URL`. Elke service heeft `GET /health` (checkt db + broker, 200/503) en integreert
 uitsluitend via de topic-exchange `rws.events` (envelope: `docs/events.md`).
 
+Daarnaast komt er een **frontend-demo-dashboard** in `frontend/` (nginx + statische build,
+lokaal poort 8005, genereren via [docs/frontend-demo-prompt.md](../../frontend-demo-prompt.md));
+deployen als vijfde Application onder `demo.<domein>` — zie §3b.
+
 ## 1. Eenmalige voorbereiding (door één teamlid)
 
 1. **Server**: VPS met Docker; installeer Dokploy (`curl -sSL https://dokploy.com/install.sh | sh`).
    Open poorten 80/443 (Traefik) en 3000 (Dokploy-UI, daarna achter eigen domein zetten).
-2. **DNS**: wildcard of vier subdomeinen naar de VPS:
-   `contract.<domein>`, `monitoring.<domein>`, `onderhoud.<domein>`, `beheer.<domein>`.
+2. **DNS**: wildcard of vijf subdomeinen naar de VPS:
+   `contract.<domein>`, `monitoring.<domein>`, `onderhoud.<domein>`, `beheer.<domein>`
+   en `demo.<domein>` (het frontend-dashboard, zie §3b).
 3. **GitHub koppelen**: Dokploy → Settings → Git → koppel `JoranF/rws-ddd` (GitHub App of
    deploy key), branch `main`.
 4. Maak het Dokploy **Project "RWS-DDD"**.
@@ -89,9 +94,34 @@ services starten zelfstandig; zie stap 4 voor de functionele volgorde):
 7. **Deploy** en controleer de logs: elke service draait zijn migraties bij start; bij
    beheer zie je `alembic upgrade head`, bij contract `prisma migrate deploy`, enz.
 
+## 3b. Frontend (demo-dashboard) als vijfde Application
+
+De frontend leeft in `frontend/` in dezelfde monorepo (genereren via
+[docs/frontend-demo-prompt.md](../../frontend-demo-prompt.md); geen bounded context,
+alleen presentatie). Nginx serveert de statische build én proxyt `/beheer/...`,
+`/contract/...`, `/monitoring/...`, `/onderhoud/...` naar de interne servicenamen —
+daardoor is CORS nergens nodig en werkt hetzelfde pad lokaal en op Dokploy.
+
+1. Project → Create → **Application**, repo `JoranF/rws-ddd`, branch `main`,
+   **Build Path = `/frontend`**, Build Type = Dockerfile, watch paths `frontend/**`.
+2. **Environment variables** — wijs naar de interne hostnamen van de vier
+   service-Applications op het `dokploy-network` (Dokploy toont die per app):
+   ```
+   CONTRACT_URL=http://<interne-host-contract>:8001
+   MONITORING_URL=http://<interne-host-monitoring>:8002
+   ONDERHOUD_URL=http://<interne-host-onderhoud>:8003
+   BEHEER_URL=http://<interne-host-beheer>:8004
+   ```
+3. **Domain** = `demo.<domein>`, poortdoel **80** (nginx), HTTPS aan.
+4. **Health check path = `/health`** (nginx geeft daar zelf 200 op).
+5. Deploy; het dashboard op `https://demo.<domein>` stuurt nu alle services aan.
+   De vier service-domeinen blijven daarnaast gewoon bruikbaar voor directe API-calls
+   (OpenAPI-docs, curl-demo's).
+
 ## 4. Verificatie na deploy (zelfde checks als lokaal)
 
-1. `curl https://<service>.<domein>/health` → 4× `200` met db+broker ok.
+1. `curl https://<service>.<domein>/health` → 4× `200` met db+broker ok, plus
+   `https://demo.<domein>/health` → `200` en het dashboard laadt met 4 groene badges.
 2. RabbitMQ management → exchange `rws.events` bestaat; 9 durable queues met elk 1 consumer:
    `contract.beheer-kunstwerk`, `contract.beheer-ontwerpeisen`, `contract.monitoring-rapport`,
    `monitoring.beheer-kunstwerk`, `onderhoud.beheer`, `onderhoud.contract`,
